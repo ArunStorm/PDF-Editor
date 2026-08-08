@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "main": "dist-electron/electron-main.js",
-  "scripts": { "dev": "pnpm build:electron && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"", "build:electron": "esbuild src/electron-main.ts src/preload.ts --bundle --platform=node --format=cjs --outdir=dist-electron --external:electron", "build:renderer": "vite build", "build": "pnpm build:electron && pnpm build:renderer", "dist": "pnpm build && electron-builder --dir", "typecheck": "tsc --noEmit", "lint": "tsc --noEmit" },
+  "scripts": { "dev": "pnpm build:electron && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && ELECTRON_DEV=1 electron .\"", "build:electron": "esbuild src/electron-main.ts src/preload.ts --bundle --platform=node --format=cjs --outdir=dist-electron --external:electron", "build:renderer": "vite build", "build": "pnpm build:electron && pnpm build:renderer", "dist": "pnpm build && electron-builder --dir", "typecheck": "tsc --noEmit", "lint": "tsc --noEmit" },
   "dependencies": { "@pdf-editor/pdf-core": "workspace:*", "@pdf-editor/pdf-ui": "workspace:*", "react": "^19.1.1", "react-dom": "^19.1.1" },
-  "devDependencies": { "@vitejs/plugin-react": "^5.0.2", "concurrently": "^9.2.1", "electron": "^37.2.6", "electron-builder": "^26.0.12", "esbuild": "^0.25.9", "vite": "^7.1.2", "wait-on": "^8.0.4", "typescript": "^5.9.2" },
-  "build": { "appId": "org.open.source.pdfeditor", "productName": "PDF Editor", "directories": { "output": "release" }, "files": ["dist-electron/**/*", "dist/**/*", "package.json", "../../packages/**/*"], "asar": true, "win": { "target": "dir" }, "mac": { "target": "dir" }, "linux": { "target": "dir" } }
+  "devDependencies": { "@types/react": "^19.1.10", "@types/react-dom": "^19.1.7", "@vitejs/plugin-react": "^5.0.2", "concurrently": "^9.2.1", "electron": "^37.2.6", "electron-builder": "^26.0.12", "esbuild": "^0.25.9", "vite": "^7.1.2", "wait-on": "^8.0.4", "typescript": "^5.9.2" },
+  "build": { "appId": "org.open.source.pdfeditor", "productName": "PDF Editor", "directories": { "output": "release" }, "files": ["dist-electron/**/*", "dist/**/*"], "asar": true, "win": { "target": "dir" }, "mac": { "target": "dir" }, "linux": { "target": "dir" } }
 }
