@@ -1,0 +1,22 @@
+{
+  "name": "pdf-editor-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @pdf-editor/web dev",
+    "dev:desktop": "pnpm --filter @pdf-editor/desktop dev",
+    "dev": "pnpm --filter @pdf-editor/web dev",
+    "build": "pnpm -r build",
+    "build:web": "pnpm --filter @pdf-editor/web build",
+    "build:desktop": "pnpm --filter @pdf-editor/desktop build",
+    "dist": "pnpm --filter @pdf-editor/desktop dist",
+    "test": "pnpm --filter @pdf-editor/pdf-core test",
+    "test:e2e": "pnpm exec playwright test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "typescript": "^5.9.2"
+  }
+}
