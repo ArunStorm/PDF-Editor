@@ -6,14 +6,14 @@ export type PdfHandle = { bytes: Uint8Array; document?: PDFDocument; source?: st
 
 export type Annotation = {
   id: string;
-  type: 'rect' | 'text';
+  type: 'rect' | 'text' | 'replacement';
   page: number;
   x: number;
   y: number;
   width?: number;
   height?: number;
   text?: string;
-  /** Viewer canvas dimensions used to convert top-left UI coordinates to PDF points. */
+  originalText?: string;
   viewportWidth?: number;
   viewportHeight?: number;
 };
@@ -36,59 +36,46 @@ export async function renderPage(handle: PdfHandle, page: number, scale = 1): Pr
 }
 
 export function annotate(handle: PdfHandle, annotation: Annotation): PdfHandle {
-  // Keep the handle immutable-friendly; the UI passes the annotation collection to save().
   void annotation;
   return handle;
 }
 
-/** Save the current PDF and, when supplied, merge simple local annotations with pdf-lib. */
+/** Save the PDF and merge simple local annotations/replacements using pdf-lib. */
 export async function save(handle: PdfHandle, options: SaveOptions = {}): Promise<Uint8Array> {
   const document = handle.document ?? await PDFDocument.load(handle.bytes, { updateMetadata: false });
   const annotations = options.annotations ?? [];
+  const font = await document.embedFont(StandardFonts.Helvetica);
 
-  // TODO: Expand this renderer with arrows, highlights, freehand paths, images, links and form fields.
-  if (annotations.length > 0) {
-    const font = await document.embedFont(StandardFonts.Helvetica);
+  for (const annotation of annotations) {
+    const page = document.getPage(annotation.page - 1);
+    if (!page) continue;
 
-    for (const annotation of annotations) {
-      const page = document.getPage(annotation.page - 1);
-      if (!page) continue;
+    const size = page.getSize();
+    const viewportWidth = annotation.viewportWidth || size.width;
+    const viewportHeight = annotation.viewportHeight || size.height;
+    const sx = size.width / viewportWidth;
+    const sy = size.height / viewportHeight;
+    const width = (annotation.width ?? 160) * sx;
+    const height = (annotation.height ?? 60) * sy;
+    const x = annotation.x * sx;
+    const y = size.height - (annotation.y + (annotation.height ?? 60)) * sy;
 
-      const size = page.getSize();
-      const viewportWidth = annotation.viewportWidth || size.width;
-      const viewportHeight = annotation.viewportHeight || size.height;
-      const sx = size.width / viewportWidth;
-      const sy = size.height / viewportHeight;
-      const x = annotation.x * sx;
-      const width = (annotation.width ?? 160) * sx;
-      const height = (annotation.height ?? 60) * sy;
-      // Viewer coordinates are top-left; PDF coordinates are bottom-left.
-      const y = size.height - (annotation.y + (annotation.height ?? 60)) * sy;
+    if (annotation.type === 'rect') {
+      page.drawRectangle({ x, y, width, height, borderWidth: 1.2,
+        borderColor: rgb(0.85, 0.55, 0), color: rgb(1, 0.85, 0.15), opacity: 0.28, borderOpacity: 0.9 });
+    }
 
-      if (annotation.type === 'rect') {
-        page.drawRectangle({
-          x,
-          y,
-          width,
-          height,
-          borderWidth: 1.5,
-          borderColor: rgb(0.12, 0.35, 0.85),
-          color: rgb(0.12, 0.35, 0.85),
-          opacity: 0.08,
-          borderOpacity: 0.95,
-        });
-      }
+    if (annotation.type === 'text' && annotation.text) {
+      page.drawText(annotation.text, { x: x + 6 * sx, y: y + Math.max(8, height - 20 * sy),
+        size: Math.max(10, 14 * sx), font, color: rgb(0.08, 0.08, 0.12), maxWidth: Math.max(40, width - 12 * sx) });
+    }
 
-      if (annotation.type === 'text' && annotation.text) {
-        page.drawText(annotation.text, {
-          x: x + 6 * sx,
-          y: y + Math.max(8, height - 20 * sy),
-          size: Math.max(10, 14 * sx),
-          font,
-          color: rgb(0.08, 0.08, 0.12),
-          maxWidth: Math.max(40, width - 12 * sx),
-        });
-      }
+    if (annotation.type === 'replacement' && annotation.text) {
+      // This is a deterministic local replacement strategy: cover the selected source text, then draw the replacement.
+      // TODO: Add background sampling/color detection for non-white PDF regions and preserve source font metrics.
+      page.drawRectangle({ x, y, width, height, color: rgb(1, 1, 1), opacity: 1, borderWidth: 0 });
+      page.drawText(annotation.text, { x, y: y + Math.max(2, height - 16 * sy),
+        size: Math.max(9, Math.min(16, height * 0.72)), font, color: rgb(0.05, 0.05, 0.05), maxWidth: Math.max(20, width) });
     }
   }
 
