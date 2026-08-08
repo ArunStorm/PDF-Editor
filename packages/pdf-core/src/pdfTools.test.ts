@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { addPageNumbers, mergePdfs, rotatePage, splitPdf, updateMetadata } from './pdfTools';
+import { addPageNumbers, mergePdfs, rotatePage, splitPdf, updateMetadata } from './pdfTools.js';
 
 async function samplePdf(pageCount: number): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
