@@ -5,91 +5,65 @@ import { pdfCore, type Annotation } from '@pdf-editor/pdf-core';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
-type Props = {
-  openFile?: () => Promise<ArrayBuffer | undefined>;
-  saveFile?: (bytes: Uint8Array) => Promise<void>;
-};
-
-type Tool = 'select' | 'text' | 'highlight';
+type Props = { openFile?: () => Promise<ArrayBuffer | undefined>; saveFile?: (bytes: Uint8Array) => Promise<void> };
+type Tool = 'select' | 'pdf-text' | 'text' | 'highlight';
 type Note = Annotation;
 type Point = { x: number; y: number };
+type TextItemView = { id: string; text: string; x: number; y: number; width: number; height: number };
 
 const buttonStyle: React.CSSProperties = {
-  border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a',
-  borderRadius: 6, padding: '7px 10px', cursor: 'pointer', fontSize: 13,
+  border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a', borderRadius: 6,
+  padding: '7px 10px', cursor: 'pointer', fontSize: 13,
 };
 
-function AnnotationOverlay({
-  width, height, annotations, selectedId, tool, onSelect, onMove, onCreateHighlight, onCreateText,
-}: {
+function AnnotationOverlay({ width, height, annotations, selectedId, tool, onSelect, onMove, onCreateHighlight, onCreateText }: {
   width: number; height: number; annotations: Note[]; selectedId: string | null; tool: Tool;
   onSelect: (id: string) => void; onMove: (id: string, x: number, y: number) => void;
-  onCreateHighlight: (x: number, y: number, width: number, height: number) => void;
-  onCreateText: (x: number, y: number) => void;
+  onCreateHighlight: (x: number, y: number, width: number, height: number) => void; onCreateText: (x: number, y: number) => void;
 }) {
   const [start, setStart] = useState<Point | null>(null);
   const [draft, setDraft] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const listening = tool === 'select' || tool === 'text' || tool === 'highlight';
 
-  function pointerPosition(stage: any): Point {
+  function position(stage: any): Point {
     const p = stage.getPointerPosition();
     return { x: Math.max(0, Math.min(width, p?.x ?? 0)), y: Math.max(0, Math.min(height, p?.y ?? 0)) };
   }
 
   function mouseDown(e: any) {
-    if (tool === 'text') {
-      const p = pointerPosition(e.target.getStage());
-      onCreateText(p.x, p.y);
-      return;
-    }
-    if (tool === 'highlight') {
-      const p = pointerPosition(e.target.getStage());
-      setStart(p); setDraft({ x: p.x, y: p.y, width: 0, height: 0 });
-    }
+    if (tool === 'text') return onCreateText(...Object.values(position(e.target.getStage())) as [number, number]);
+    if (tool === 'highlight') { const p = position(e.target.getStage()); setStart(p); setDraft({ x: p.x, y: p.y, width: 0, height: 0 }); }
   }
 
   function mouseMove(e: any) {
     if (!start || tool !== 'highlight') return;
-    const p = pointerPosition(e.target.getStage());
+    const p = position(e.target.getStage());
     setDraft({ x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), width: Math.abs(p.x - start.x), height: Math.abs(p.y - start.y) });
   }
 
   function mouseUp() {
-    if (!start || !draft || tool !== 'highlight') return;
-    if (draft.width > 8 && draft.height > 8) onCreateHighlight(draft.x, draft.y, draft.width, draft.height);
+    if (start && draft && tool === 'highlight' && draft.width > 8 && draft.height > 8) onCreateHighlight(draft.x, draft.y, draft.width, draft.height);
     setStart(null); setDraft(null);
   }
 
-  return (
-    <Stage
-      width={width} height={height}
-      style={{ position: 'absolute', inset: 0, cursor: tool === 'text' ? 'text' : tool === 'highlight' ? 'crosshair' : 'default' }}
-      onMouseDown={mouseDown} onMouseMove={mouseMove} onMouseUp={mouseUp}
-    >
-      <Layer>
-        {annotations.map((a) => {
-          const selected = selectedId === a.id;
-          if (a.type === 'text') {
-            return <KonvaText key={a.id} x={a.x} y={a.y} width={a.width ?? 220} height={a.height ?? 50}
-              text={a.text ?? 'Text'} fontSize={16} padding={6} fill="#111827"
-              stroke={selected ? '#2563eb' : undefined} strokeWidth={selected ? 1 : 0}
-              draggable={tool === 'select'}
-              onClick={(e) => { e.cancelBubble = true; onSelect(a.id); }}
-              onTap={(e) => { e.cancelBubble = true; onSelect(a.id); }}
-              onDblClick={() => onSelect(a.id)}
-              onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())} />;
-          }
-          return <Rect key={a.id} x={a.x} y={a.y} width={a.width ?? 180} height={a.height ?? 60}
-            fill="rgba(250,204,21,0.28)" stroke={selected ? '#2563eb' : '#eab308'} strokeWidth={selected ? 2.5 : 1}
-            draggable={tool === 'select'}
-            onClick={(e) => { e.cancelBubble = true; onSelect(a.id); }}
-            onTap={(e) => { e.cancelBubble = true; onSelect(a.id); }}
-            onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())} />;
-        })}
-        {draft && <Rect x={draft.x} y={draft.y} width={draft.width} height={draft.height}
-          fill="rgba(250,204,21,0.2)" stroke="#ca8a04" dash={[6, 4]} />}
-      </Layer>
-    </Stage>
-  );
+  return <Stage width={width} height={height} listening={listening}
+    style={{ position: 'absolute', inset: 0, cursor: tool === 'text' ? 'text' : tool === 'highlight' ? 'crosshair' : 'default' }}
+    onMouseDown={mouseDown} onMouseMove={mouseMove} onMouseUp={mouseUp}>
+    <Layer>
+      {annotations.map((a) => {
+        const selected = selectedId === a.id;
+        if (a.type === 'text' || a.type === 'replacement') return <KonvaText key={a.id} x={a.x} y={a.y} width={a.width ?? 220} height={a.height ?? 50}
+          text={a.text ?? ''} fontSize={16} padding={6} fill="#111827" stroke={selected ? '#2563eb' : undefined} strokeWidth={selected ? 1 : 0}
+          draggable={tool === 'select'} onClick={(e) => { e.cancelBubble = true; onSelect(a.id); }} onTap={(e) => { e.cancelBubble = true; onSelect(a.id); }}
+          onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())} />;
+        return <Rect key={a.id} x={a.x} y={a.y} width={a.width ?? 180} height={a.height ?? 60}
+          fill={a.type === 'replacement' ? '#fff' : 'rgba(250,204,21,0.28)'} stroke={selected ? '#2563eb' : '#eab308'} strokeWidth={selected ? 2.5 : 1}
+          draggable={tool === 'select'} onClick={(e) => { e.cancelBubble = true; onSelect(a.id); }} onTap={(e) => { e.cancelBubble = true; onSelect(a.id); }}
+          onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())} />;
+      })}
+      {draft && <Rect x={draft.x} y={draft.y} width={draft.width} height={draft.height} fill="rgba(250,204,21,0.2)" stroke="#ca8a04" dash={[6, 4]} />}
+    </Layer>
+  </Stage>;
 }
 
 export default function Viewer({ openFile, saveFile }: Props) {
@@ -101,24 +75,24 @@ export default function Viewer({ openFile, saveFile }: Props) {
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.15);
   const [rotation, setRotation] = useState(0);
+  const [canvasSize, setCanvasSize] = useState({ width: 600, height: 800 });
+  const [textItems, setTextItems] = useState<TextItemView[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [history, setHistory] = useState<Note[][]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedPdfText, setSelectedPdfText] = useState<TextItemView | null>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [status, setStatus] = useState('Loading sample.pdf…');
   const [search, setSearch] = useState('');
-  const [ocrText, setOcrText] = useState('');
+  const [pageText, setPageText] = useState('');
 
-  function commitNotes(next: Note[]) {
-    setHistory((h) => [...h, notes]);
-    setNotes(next);
-  }
+  function commitNotes(next: Note[]) { setHistory((h) => [...h, notes]); setNotes(next); }
 
   async function loadBytes(input: ArrayBuffer | Uint8Array) {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
     const task = getDocument({ data: bytes, isEvalSupported: false, disableAutoFetch: false, disableJavaScript: true });
     const pdf = await task.promise;
-    setSourceBytes(bytes); setDoc(pdf); setPageCount(pdf.numPages); setPageNumber(1); setNotes([]); setHistory([]); setSelectedId(null);
+    setSourceBytes(bytes); setDoc(pdf); setPageCount(pdf.numPages); setPageNumber(1); setNotes([]); setHistory([]); setSelectedId(null); setSelectedPdfText(null);
     setStatus(`${pdf.numPages} page${pdf.numPages === 1 ? '' : 's'} loaded`);
   }
 
@@ -127,8 +101,26 @@ export default function Viewer({ openFile, saveFile }: Props) {
     const page = await doc.getPage(target);
     const viewport = page.getViewport({ scale: targetScale, rotation });
     const canvas = canvasRef.current; canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+    canvas.style.width = `${Math.ceil(viewport.width)}px`; canvas.style.height = `${Math.ceil(viewport.height)}px`;
     const context = canvas.getContext('2d'); if (!context) return;
     await page.render({ canvasContext: context, viewport }).promise;
+    setCanvasSize({ width: canvas.width, height: canvas.height });
+
+    const content = await page.getTextContent();
+    const items: TextItemView[] = [];
+    if (rotation === 0) {
+      content.items.forEach((raw: any, index) => {
+        if (!('str' in raw) || !raw.str.trim()) return;
+        const fontHeight = Math.max(8, Math.abs(raw.transform?.[3] ?? raw.height ?? 10) * targetScale);
+        const x = (raw.transform?.[4] ?? 0) * targetScale;
+        const baseline = viewport.height - (raw.transform?.[5] ?? 0) * targetScale;
+        const y = Math.max(0, baseline - fontHeight);
+        const width = Math.max(4, (raw.width ?? 20) * targetScale);
+        items.push({ id: `${target}-${index}`, text: raw.str, x, y, width, height: Math.max(fontHeight, raw.height ?? fontHeight) });
+      });
+    }
+    setTextItems(items);
+    setPageText(content.items.map((item: any) => 'str' in item ? item.str : '').join(' ').replace(/\s+/g, ' ').trim());
   }
 
   async function renderThumbnails() {
@@ -141,59 +133,47 @@ export default function Viewer({ openFile, saveFile }: Props) {
     }
   }
 
-  useEffect(() => {
-    fetch('/assets/sample.pdf').then((r) => r.arrayBuffer()).then(loadBytes).catch((e) => setStatus(`Sample load failed: ${String(e)}`));
-  }, []);
+  useEffect(() => { fetch('/assets/sample.pdf').then((r) => r.arrayBuffer()).then(loadBytes).catch((e) => setStatus(`Sample load failed: ${String(e)}`)); }, []);
   useEffect(() => { renderPage().catch((e) => setStatus(`Render failed: ${String(e)}`)); }, [doc, pageNumber, scale, rotation]);
   useEffect(() => { renderThumbnails().catch(() => undefined); }, [doc]);
 
-  async function handleOpen() {
-    try { const bytes = await openFile?.(); if (bytes) await loadBytes(bytes); }
-    catch (e) { setStatus(`Open failed: ${String(e)}`); }
-  }
+  async function handleOpen() { try { const bytes = await openFile?.(); if (bytes) await loadBytes(bytes); } catch (e) { setStatus(`Open failed: ${String(e)}`); } }
 
   async function handleDownload() {
     if (!sourceBytes) return setStatus('No PDF is loaded');
-    try {
-      const handle = await pdfCore.open(sourceBytes);
-      const output = await pdfCore.save(handle, { annotations: notes });
-      await saveFile?.(output); setStatus('PDF downloaded successfully');
-    } catch (e) { setStatus(`Export failed: ${String(e)}`); }
+    try { const handle = await pdfCore.open(sourceBytes); const output = await pdfCore.save(handle, { annotations: notes }); await saveFile?.(output); setStatus('PDF downloaded successfully'); }
+    catch (e) { setStatus(`Export failed: ${String(e)}`); }
   }
 
-  async function handleOcr() {
-    if (!doc) return;
-    try {
-      setStatus(`Reading page ${pageNumber} locally…`);
-      const page = await doc.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const text = content.items.map((item: any) => 'str' in item ? item.str : '').join(' ').replace(/\s+/g, ' ').trim();
-      setOcrText(text || 'No embedded text found. Tesseract worker integration remains available for scanned pages.');
-      setStatus(text ? `Page ${pageNumber} text extracted locally` : `No embedded text on page ${pageNumber}`);
-    } catch (e) { setStatus(`OCR/text extraction failed: ${String(e)}`); }
-  }
-
-  async function handleFind() {
-    if (!doc || !search.trim()) return setStatus('Enter text to search');
-    const needle = search.trim().toLowerCase();
-    for (let i = 1; i <= doc.numPages; i += 1) {
-      const content = await (await doc.getPage(i)).getTextContent();
-      const text = content.items.map((item: any) => 'str' in item ? item.str : '').join(' ').toLowerCase();
-      if (text.includes(needle)) { setPageNumber(i); setStatus(`Found “${search}” on page ${i}`); return; }
-    }
-    setStatus(`“${search}” was not found in this PDF`);
+  function editPdfText() {
+    if (!selectedPdfText) return setStatus('Click Edit PDF text, then click a text fragment in the document');
+    const replacement = window.prompt(`Replace “${selectedPdfText.text}” with:`, selectedPdfText.text);
+    if (replacement === null) return;
+    const note: Note = { id: crypto.randomUUID(), type: 'replacement', page: pageNumber, x: selectedPdfText.x, y: selectedPdfText.y,
+      width: selectedPdfText.width, height: selectedPdfText.height + 3, text: replacement, originalText: selectedPdfText.text,
+      viewportWidth: canvasSize.width, viewportHeight: canvasSize.height };
+    commitNotes([...notes, note]); setSelectedId(note.id); setSelectedPdfText(null); setTool('select'); setStatus(`Replaced “${note.originalText}” with “${replacement}”`);
   }
 
   function addTextAt(x: number, y: number) {
     const text = window.prompt('Enter text to add to the PDF:', 'New text');
     if (text === null || !text.trim()) return;
-    const note: Note = { id: crypto.randomUUID(), type: 'text', page: pageNumber, x, y, width: 240, height: 50, text: text.trim(), viewportWidth: canvasRef.current?.width, viewportHeight: canvasRef.current?.height };
-    commitNotes([...notes, note]); setSelectedId(note.id); setTool('select'); setStatus('Text annotation added');
+    const note: Note = { id: crypto.randomUUID(), type: 'text', page: pageNumber, x, y, width: 240, height: 50, text: text.trim(), viewportWidth: canvasSize.width, viewportHeight: canvasSize.height };
+    commitNotes([...notes, note]); setSelectedId(note.id); setTool('select'); setStatus('Text added');
   }
 
   function addHighlightAt(x: number, y: number, width: number, height: number) {
-    const note: Note = { id: crypto.randomUUID(), type: 'rect', page: pageNumber, x, y, width, height, viewportWidth: canvasRef.current?.width, viewportHeight: canvasRef.current?.height };
+    const note: Note = { id: crypto.randomUUID(), type: 'rect', page: pageNumber, x, y, width, height, viewportWidth: canvasSize.width, viewportHeight: canvasSize.height };
     commitNotes([...notes, note]); setSelectedId(note.id); setTool('select'); setStatus('Highlight added');
+  }
+
+  function editSelected() {
+    if (!selectedId) return setStatus('Select an added/replaced annotation first');
+    const current = notes.find((n) => n.id === selectedId); if (!current) return;
+    if (current.type === 'text' || current.type === 'replacement') {
+      const text = window.prompt('Edit text:', current.text ?? ''); if (text === null) return;
+      commitNotes(notes.map((n) => n.id === selectedId ? { ...n, text } : n)); setStatus('Text updated');
+    } else setStatus('Highlight can be moved or deleted; it is not source-PDF text.');
   }
 
   function deleteSelected() {
@@ -201,87 +181,83 @@ export default function Viewer({ openFile, saveFile }: Props) {
     commitNotes(notes.filter((n) => n.id !== selectedId)); setSelectedId(null); setStatus('Annotation deleted');
   }
 
-  function editSelected() {
-    if (!selectedId) return setStatus('Select an annotation first');
-    const current = notes.find((n) => n.id === selectedId);
-    if (!current) return;
-    if (current.type !== 'text') return setStatus('Only text annotations can be edited; drag highlights to move them');
-    const text = window.prompt('Edit text:', current.text ?? '');
-    if (text === null) return;
-    commitNotes(notes.map((n) => n.id === selectedId ? { ...n, text } : n)); setStatus('Text annotation updated');
-  }
-
-  function moveSelected(id: string, x: number, y: number) {
-    commitNotes(notes.map((n) => n.id === id ? { ...n, x, y } : n));
-  }
+  function moveSelected(id: string, x: number, y: number) { commitNotes(notes.map((n) => n.id === id ? { ...n, x, y } : n)); }
 
   function undo() {
-    const previous = history[history.length - 1];
-    if (!previous) return setStatus('Nothing to undo');
+    const previous = history[history.length - 1]; if (!previous) return setStatus('Nothing to undo');
     setNotes(previous); setHistory((h) => h.slice(0, -1)); setSelectedId(null); setStatus('Undo complete');
   }
 
-  return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f1f5f9', color: '#0f172a', fontFamily: 'Inter, Segoe UI, system-ui, sans-serif' }}>
-      <header style={{ background: '#0f172a', color: '#fff', padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div><div style={{ fontSize: 18, fontWeight: 750 }}>PDF Editor</div><div style={{ fontSize: 11, color: '#94a3b8' }}>Local-first PDF workspace</div></div>
-        <div style={{ fontSize: 12, color: '#cbd5e1' }}>{status}</div>
-      </header>
+  async function findText() {
+    if (!doc || !search.trim()) return setStatus('Enter text to search');
+    const needle = search.trim().toLowerCase();
+    for (let i = 1; i <= doc.numPages; i += 1) {
+      const content = await (await doc.getPage(i)).getTextContent();
+      const text = content.items.map((item: any) => 'str' in item ? item.str : '').join(' ').toLowerCase();
+      if (text.includes(needle)) { setPageNumber(i); setStatus(`Found “${search}” on page ${i}`); return; }
+    }
+    setStatus(`“${search}” was not found`);
+  }
 
-      <div style={{ background: '#fff', borderBottom: '1px solid #dbe3ec', padding: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button style={buttonStyle} onClick={handleOpen}>📂 Open</button>
-        <button style={{ ...buttonStyle, background: tool === 'select' ? '#dbeafe' : '#fff', borderColor: tool === 'select' ? '#60a5fa' : '#cbd5e1' }} onClick={() => setTool('select')}>↖ Select / Edit</button>
-        <button style={{ ...buttonStyle, background: tool === 'text' ? '#dbeafe' : '#fff', borderColor: tool === 'text' ? '#60a5fa' : '#cbd5e1' }} onClick={() => setTool('text')}>T Add Text</button>
-        <button style={{ ...buttonStyle, background: tool === 'highlight' ? '#fef3c7' : '#fff', borderColor: tool === 'highlight' ? '#f59e0b' : '#cbd5e1' }} onClick={() => setTool('highlight')}>▣ Highlight</button>
-        <button style={buttonStyle} onClick={editSelected} disabled={!selectedId}>Edit selected</button>
-        <button style={buttonStyle} onClick={deleteSelected}>🗑 Delete</button>
-        <button style={buttonStyle} onClick={undo} disabled={!history.length}>↶ Undo</button>
-        <span style={{ width: 1, height: 26, background: '#e2e8f0', margin: '0 4px' }} />
-        <button style={buttonStyle} onClick={() => setScale((v) => Math.max(0.5, +(v - 0.1).toFixed(2)))}>−</button>
-        <span style={{ minWidth: 48, textAlign: 'center', fontSize: 12 }}>{Math.round(scale * 100)}%</span>
-        <button style={buttonStyle} onClick={() => setScale((v) => Math.min(3, +(v + 0.1).toFixed(2)))}>+</button>
-        <button style={buttonStyle} onClick={() => setScale(1)}>100%</button>
-        <button style={buttonStyle} onClick={() => setRotation((v) => (v + 90) % 360)}>↻ Rotate</button>
-        <button style={buttonStyle} onClick={handleOcr}>🔎 OCR / Extract Text</button>
-        <button style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb' }} onClick={handleDownload}>⬇ Download PDF</button>
-      </div>
+  return <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f1f5f9', color: '#0f172a', fontFamily: 'Inter, Segoe UI, system-ui, sans-serif' }}>
+    <header style={{ background: '#0f172a', color: '#fff', padding: '12px 18px', display: 'flex', justifyContent: 'space-between' }}>
+      <div><div style={{ fontSize: 18, fontWeight: 750 }}>PDF Editor</div><div style={{ fontSize: 11, color: '#94a3b8' }}>Local-first PDF workspace</div></div>
+      <div style={{ fontSize: 12, color: '#cbd5e1' }}>{status}</div>
+    </header>
 
-      <div style={{ background: '#fff', borderBottom: '1px solid #dbe3ec', padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button style={buttonStyle} disabled={pageNumber <= 1} onClick={() => setPageNumber((p) => Math.max(1, p - 1))}>‹</button>
-        <span style={{ fontSize: 13 }}>Page</span>
-        <input value={pageNumber} min={1} max={pageCount || 1} type="number" onChange={(e) => setPageNumber(Math.min(pageCount || 1, Math.max(1, Number(e.target.value) || 1)))} style={{ width: 58, padding: 6, border: '1px solid #cbd5e1', borderRadius: 5 }} />
-        <span style={{ fontSize: 13 }}>of {pageCount}</span>
-        <button style={buttonStyle} disabled={pageNumber >= pageCount} onClick={() => setPageNumber((p) => Math.min(pageCount, p + 1))}>›</button>
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#64748b' }}>Tool: {tool}</span>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void handleFind(); }} placeholder="Search PDF…" style={{ width: 180, padding: 7, border: '1px solid #cbd5e1', borderRadius: 5 }} />
-        <button style={buttonStyle} onClick={() => void handleFind()}>Find</button>
-      </div>
-
-      {ocrText && <div style={{ background: '#fffbeb', borderBottom: '1px solid #fde68a', padding: '8px 14px', maxHeight: 90, overflow: 'auto', fontSize: 12 }}><b>Page text:</b> {ocrText}</div>}
-
-      <main style={{ minHeight: 0, flex: 1, display: 'flex' }}>
-        <aside style={{ width: 150, background: '#fff', borderRight: '1px solid #dbe3ec', overflow: 'auto', padding: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '4px 6px 10px' }}>PAGES</div>
-          {Array.from({ length: pageCount }, (_, i) => i + 1).map((page) => (
-            <button key={page} onClick={() => setPageNumber(page)} style={{ display: 'block', width: '100%', border: page === pageNumber ? '2px solid #2563eb' : '1px solid #dbe3ec', background: page === pageNumber ? '#eff6ff' : '#fff', borderRadius: 6, marginBottom: 10, padding: 6, cursor: 'pointer' }}>
-              <canvas ref={(el) => { thumbRefs.current[page] = el; }} style={{ display: 'block', width: '100%', height: 'auto', background: '#fff' }} /><div style={{ fontSize: 11, paddingTop: 5, color: '#475569' }}>Page {page}</div>
-            </button>
-          ))}
-        </aside>
-
-        <section style={{ flex: 1, minWidth: 0, overflow: 'auto', background: '#e2e8f0', padding: 28, display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
-          <div style={{ position: 'relative', display: 'inline-block', boxShadow: '0 8px 28px rgba(15,23,42,.18)', background: '#fff' }}>
-            <canvas ref={canvasRef} style={{ display: 'block', maxWidth: 'none' }} />
-            {canvasRef.current && <AnnotationOverlay width={canvasRef.current.width} height={canvasRef.current.height}
-              annotations={notes.filter((n) => n.page === pageNumber)} selectedId={selectedId} tool={tool}
-              onSelect={setSelectedId} onMove={moveSelected} onCreateHighlight={addHighlightAt} onCreateText={addTextAt} />}
-          </div>
-        </section>
-      </main>
-
-      <footer style={{ background: '#fff', borderTop: '1px solid #dbe3ec', padding: '7px 14px', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
-        <span>{notes.length} annotation{notes.length === 1 ? '' : 's'} · PDF.js + pdf-lib + Konva</span><span>Local processing · No paid service required</span>
-      </footer>
+    <div style={{ background: '#fff', borderBottom: '1px solid #dbe3ec', padding: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button style={buttonStyle} onClick={handleOpen}>📂 Open</button>
+      <button style={{ ...buttonStyle, background: tool === 'pdf-text' ? '#dbeafe' : '#fff', borderColor: tool === 'pdf-text' ? '#60a5fa' : '#cbd5e1' }} onClick={() => { setTool('pdf-text'); setSelectedPdfText(null); setStatus('Click existing PDF text to select it'); }}>✏️ Edit PDF text</button>
+      <button style={{ ...buttonStyle, background: tool === 'text' ? '#dbeafe' : '#fff' }} onClick={() => setTool('text')}>T Add Text</button>
+      <button style={{ ...buttonStyle, background: tool === 'highlight' ? '#fef3c7' : '#fff' }} onClick={() => setTool('highlight')}>▣ Highlight</button>
+      <button style={buttonStyle} onClick={editSelected} disabled={!selectedId}>Edit selected</button>
+      <button style={buttonStyle} onClick={deleteSelected}>🗑 Delete</button>
+      <button style={buttonStyle} onClick={undo} disabled={!history.length}>↶ Undo</button>
+      <span style={{ width: 1, height: 26, background: '#e2e8f0' }} />
+      <button style={buttonStyle} onClick={() => setScale((v) => Math.max(0.5, +(v - 0.1).toFixed(2)))}>−</button>
+      <span style={{ minWidth: 48, textAlign: 'center', fontSize: 12 }}>{Math.round(scale * 100)}%</span>
+      <button style={buttonStyle} onClick={() => setScale((v) => Math.min(3, +(v + 0.1).toFixed(2)))}>+</button>
+      <button style={buttonStyle} onClick={() => setScale(1)}>100%</button>
+      <button style={buttonStyle} onClick={() => setRotation((v) => (v + 90) % 360)}>↻ Rotate</button>
+      <button style={buttonStyle} onClick={() => setStatus(pageText ? `Page ${pageNumber} text extracted locally` : 'No embedded text on this page')}>🔎 OCR / Text</button>
+      <button style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb' }} onClick={handleDownload}>⬇ Download PDF</button>
     </div>
-  );
+
+    <div style={{ background: '#fff', borderBottom: '1px solid #dbe3ec', padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <button style={buttonStyle} disabled={pageNumber <= 1} onClick={() => setPageNumber((p) => Math.max(1, p - 1))}>‹</button>
+      <span style={{ fontSize: 13 }}>Page</span>
+      <input value={pageNumber} min={1} max={pageCount || 1} type="number" onChange={(e) => setPageNumber(Math.min(pageCount || 1, Math.max(1, Number(e.target.value) || 1)))} style={{ width: 58, padding: 6, border: '1px solid #cbd5e1', borderRadius: 5 }} />
+      <span style={{ fontSize: 13 }}>of {pageCount}</span>
+      <button style={buttonStyle} disabled={pageNumber >= pageCount} onClick={() => setPageNumber((p) => Math.min(pageCount, p + 1))}>›</button>
+      <span style={{ marginLeft: 'auto', fontSize: 12, color: '#64748b' }}>{tool === 'pdf-text' ? 'Click source text to select' : `Tool: ${tool}`}</span>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void findText(); }} placeholder="Search PDF…" style={{ width: 180, padding: 7, border: '1px solid #cbd5e1', borderRadius: 5 }} />
+      <button style={buttonStyle} onClick={() => void findText()}>Find</button>
+    </div>
+
+    {selectedPdfText && <div style={{ background: '#eff6ff', borderBottom: '1px solid #bfdbfe', padding: '7px 14px', fontSize: 12 }}>
+      Selected PDF text: <b>{selectedPdfText.text}</b> <button style={{ ...buttonStyle, marginLeft: 8, padding: '4px 8px' }} onClick={editPdfText}>Replace text</button>
+    </div>}
+
+    <main style={{ minHeight: 0, flex: 1, display: 'flex' }}>
+      <aside style={{ width: 150, background: '#fff', borderRight: '1px solid #dbe3ec', overflow: 'auto', padding: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '4px 6px 10px' }}>PAGES</div>
+        {Array.from({ length: pageCount }, (_, i) => i + 1).map((page) => <button key={page} onClick={() => setPageNumber(page)} style={{ display: 'block', width: '100%', border: page === pageNumber ? '2px solid #2563eb' : '1px solid #dbe3ec', background: page === pageNumber ? '#eff6ff' : '#fff', borderRadius: 6, marginBottom: 10, padding: 6, cursor: 'pointer' }}>
+          <canvas ref={(el) => { thumbRefs.current[page] = el; }} style={{ display: 'block', width: '100%', height: 'auto', background: '#fff' }} /><div style={{ fontSize: 11, paddingTop: 5 }}>Page {page}</div>
+        </button>)}
+      </aside>
+
+      <section style={{ flex: 1, minWidth: 0, overflow: 'auto', background: '#e2e8f0', padding: 28, display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
+        <div style={{ position: 'relative', display: 'inline-block', boxShadow: '0 8px 28px rgba(15,23,42,.18)', background: '#fff' }}>
+          <canvas ref={canvasRef} style={{ display: 'block', maxWidth: 'none' }} />
+          {tool === 'pdf-text' && rotation === 0 && textItems.map((item) => <button key={item.id} title={`Edit: ${item.text}`} onClick={(e) => { e.stopPropagation(); setSelectedPdfText(item); }} style={{ position: 'absolute', left: item.x, top: item.y, width: item.width, height: item.height, padding: 0, margin: 0, border: selectedPdfText?.id === item.id ? '2px solid #2563eb' : '1px solid transparent', background: selectedPdfText?.id === item.id ? 'rgba(37,99,235,.10)' : 'transparent', color: 'transparent', cursor: 'text', overflow: 'hidden' }}>{item.text}</button>)}
+          <AnnotationOverlay width={canvasSize.width} height={canvasSize.height} annotations={notes.filter((n) => n.page === pageNumber)} selectedId={selectedId} tool={tool}
+            onSelect={(id) => { setSelectedId(id); setSelectedPdfText(null); }} onMove={moveSelected} onCreateHighlight={addHighlightAt} onCreateText={addTextAt} />
+        </div>
+      </section>
+    </main>
+
+    <footer style={{ background: '#fff', borderTop: '1px solid #dbe3ec', padding: '7px 14px', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
+      <span>{notes.length} edit/annotation{notes.length === 1 ? '' : 's'} · {pageText.length} characters on current page</span><span>100% local processing</span>
+    </footer>
+  </div>;
 }
