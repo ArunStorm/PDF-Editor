@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { addPageNumbers, mergePdfs, rotatePage, splitPdf, updateMetadata } from './pdfTools';
+import { addPageNumbers, mergePdfs, rotatePage, splitPdf, updateMetadata } from './pdfTools.js';
 
 async function samplePdf(pageCount: number): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
@@ -9,8 +9,7 @@ async function samplePdf(pageCount: number): Promise<Uint8Array> {
 
 describe('pdfTools', () => {
   it('merges PDFs', async () => {
-    const a = await samplePdf(2); const b = await samplePdf(1);
-    const merged = await mergePdfs([a, b]); const doc = await PDFDocument.load(merged);
+    const a = await samplePdf(2); const b = await samplePdf(1); const merged = await mergePdfs([a, b]); const doc = await PDFDocument.load(merged);
     expect(doc.getPageCount()).toBe(3);
   });
   it('splits selected pages', async () => {
