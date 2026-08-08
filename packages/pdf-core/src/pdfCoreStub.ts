@@ -1,12 +1,12 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
-/** Shared PDF domain types. Heavy rendering stays in PDF.js; editing is local via pdf-lib. */
+/** Shared PDF domain types. Rendering stays in PDF.js; local editing/export uses pdf-lib. */
 export type PdfInput = ArrayBuffer | Uint8Array | string;
 export type PdfHandle = { bytes: Uint8Array; document?: PDFDocument; source?: string };
 
 export type Annotation = {
   id: string;
-  type: 'rect' | 'text' | 'replacement';
+  type: 'rect' | 'text' | 'replacement' | 'image';
   page: number;
   x: number;
   y: number;
@@ -14,6 +14,7 @@ export type Annotation = {
   height?: number;
   text?: string;
   originalText?: string;
+  imageData?: string;
   viewportWidth?: number;
   viewportHeight?: number;
 };
@@ -30,7 +31,6 @@ export async function open(input: PdfInput): Promise<PdfHandle> {
 }
 
 export async function renderPage(handle: PdfHandle, page: number, scale = 1): Promise<{ page: number; scale: number; bytes: Uint8Array }> {
-  // TODO: PDF.js owns rasterization in the UI. Keep this API for future native/server renderers.
   if (page < 1 || scale <= 0) throw new Error('Invalid page or scale');
   return { page, scale, bytes: handle.bytes };
 }
@@ -40,7 +40,7 @@ export function annotate(handle: PdfHandle, annotation: Annotation): PdfHandle {
   return handle;
 }
 
-/** Save the PDF and merge simple local annotations/replacements using pdf-lib. */
+/** Save the PDF and merge local annotations/replacements/images using pdf-lib. */
 export async function save(handle: PdfHandle, options: SaveOptions = {}): Promise<Uint8Array> {
   const document = handle.document ?? await PDFDocument.load(handle.bytes, { updateMetadata: false });
   const annotations = options.annotations ?? [];
@@ -71,15 +71,22 @@ export async function save(handle: PdfHandle, options: SaveOptions = {}): Promis
     }
 
     if (annotation.type === 'replacement' && annotation.text) {
-      // This is a deterministic local replacement strategy: cover the selected source text, then draw the replacement.
-      // TODO: Add background sampling/color detection for non-white PDF regions and preserve source font metrics.
+      // Cover selected source text and draw replacement text locally.
+      // TODO: Sample the original background and preserve the original embedded font metrics.
       page.drawRectangle({ x, y, width, height, color: rgb(1, 1, 1), opacity: 1, borderWidth: 0 });
       page.drawText(annotation.text, { x, y: y + Math.max(2, height - 16 * sy),
         size: Math.max(9, Math.min(16, height * 0.72)), font, color: rgb(0.05, 0.05, 0.05), maxWidth: Math.max(20, width) });
     }
+
+    if (annotation.type === 'image' && annotation.imageData) {
+      const image = annotation.imageData.startsWith('data:image/png')
+        ? await document.embedPng(annotation.imageData)
+        : await document.embedJpg(annotation.imageData);
+      page.drawImage(image, { x, y, width, height });
+    }
   }
 
-  return document.save();
+  return document.save({ useObjectStreams: true });
 }
 
 export async function ocrPage(handle: PdfHandle, page: number): Promise<string> {
