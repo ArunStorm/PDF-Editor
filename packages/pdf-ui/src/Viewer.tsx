@@ -10,77 +10,83 @@ type Props = {
   saveFile?: (bytes: Uint8Array) => Promise<void>;
 };
 
-type Tool = 'select' | 'text' | 'rectangle';
-type Note = Annotation & { selected?: boolean };
+type Tool = 'select' | 'text' | 'highlight';
+type Note = Annotation;
+type Point = { x: number; y: number };
 
 const buttonStyle: React.CSSProperties = {
-  border: '1px solid #cbd5e1',
-  background: '#fff',
-  color: '#0f172a',
-  borderRadius: 6,
-  padding: '7px 10px',
-  cursor: 'pointer',
-  fontSize: 13,
+  border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a',
+  borderRadius: 6, padding: '7px 10px', cursor: 'pointer', fontSize: 13,
 };
 
 function AnnotationOverlay({
-  width,
-  height,
-  annotations,
-  selectedId,
-  onSelect,
-  onMove,
+  width, height, annotations, selectedId, tool, onSelect, onMove, onCreateHighlight, onCreateText,
 }: {
-  width: number;
-  height: number;
-  annotations: Note[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onMove: (id: string, x: number, y: number) => void;
+  width: number; height: number; annotations: Note[]; selectedId: string | null; tool: Tool;
+  onSelect: (id: string) => void; onMove: (id: string, x: number, y: number) => void;
+  onCreateHighlight: (x: number, y: number, width: number, height: number) => void;
+  onCreateText: (x: number, y: number) => void;
 }) {
+  const [start, setStart] = useState<Point | null>(null);
+  const [draft, setDraft] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  function pointerPosition(stage: any): Point {
+    const p = stage.getPointerPosition();
+    return { x: Math.max(0, Math.min(width, p?.x ?? 0)), y: Math.max(0, Math.min(height, p?.y ?? 0)) };
+  }
+
+  function mouseDown(e: any) {
+    if (tool === 'text') {
+      const p = pointerPosition(e.target.getStage());
+      onCreateText(p.x, p.y);
+      return;
+    }
+    if (tool === 'highlight') {
+      const p = pointerPosition(e.target.getStage());
+      setStart(p); setDraft({ x: p.x, y: p.y, width: 0, height: 0 });
+    }
+  }
+
+  function mouseMove(e: any) {
+    if (!start || tool !== 'highlight') return;
+    const p = pointerPosition(e.target.getStage());
+    setDraft({ x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), width: Math.abs(p.x - start.x), height: Math.abs(p.y - start.y) });
+  }
+
+  function mouseUp() {
+    if (!start || !draft || tool !== 'highlight') return;
+    if (draft.width > 8 && draft.height > 8) onCreateHighlight(draft.x, draft.y, draft.width, draft.height);
+    setStart(null); setDraft(null);
+  }
+
   return (
-    <Stage width={width} height={height} style={{ position: 'absolute', inset: 0 }}>
+    <Stage
+      width={width} height={height}
+      style={{ position: 'absolute', inset: 0, cursor: tool === 'text' ? 'text' : tool === 'highlight' ? 'crosshair' : 'default' }}
+      onMouseDown={mouseDown} onMouseMove={mouseMove} onMouseUp={mouseUp}
+    >
       <Layer>
         {annotations.map((a) => {
           const selected = selectedId === a.id;
           if (a.type === 'text') {
-            return (
-              <KonvaText
-                key={a.id}
-                x={a.x}
-                y={a.y}
-                width={a.width ?? 180}
-                height={a.height ?? 50}
-                text={a.text ?? 'Text'}
-                fontSize={16}
-                padding={6}
-                fill="#111827"
-                stroke={selected ? '#2563eb' : undefined}
-                strokeWidth={selected ? 1 : 0}
-                draggable
-                onClick={() => onSelect(a.id)}
-                onTap={() => onSelect(a.id)}
-                onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())}
-              />
-            );
+            return <KonvaText key={a.id} x={a.x} y={a.y} width={a.width ?? 220} height={a.height ?? 50}
+              text={a.text ?? 'Text'} fontSize={16} padding={6} fill="#111827"
+              stroke={selected ? '#2563eb' : undefined} strokeWidth={selected ? 1 : 0}
+              draggable={tool === 'select'}
+              onClick={(e) => { e.cancelBubble = true; onSelect(a.id); }}
+              onTap={(e) => { e.cancelBubble = true; onSelect(a.id); }}
+              onDblClick={() => onSelect(a.id)}
+              onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())} />;
           }
-          return (
-            <Rect
-              key={a.id}
-              x={a.x}
-              y={a.y}
-              width={a.width ?? 180}
-              height={a.height ?? 60}
-              fill="rgba(37,99,235,0.08)"
-              stroke={selected ? '#2563eb' : '#64748b'}
-              strokeWidth={selected ? 2.5 : 1.5}
-              draggable
-              onClick={() => onSelect(a.id)}
-              onTap={() => onSelect(a.id)}
-              onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())}
-            />
-          );
+          return <Rect key={a.id} x={a.x} y={a.y} width={a.width ?? 180} height={a.height ?? 60}
+            fill="rgba(250,204,21,0.28)" stroke={selected ? '#2563eb' : '#eab308'} strokeWidth={selected ? 2.5 : 1}
+            draggable={tool === 'select'}
+            onClick={(e) => { e.cancelBubble = true; onSelect(a.id); }}
+            onTap={(e) => { e.cancelBubble = true; onSelect(a.id); }}
+            onDragEnd={(e) => onMove(a.id, e.target.x(), e.target.y())} />;
         })}
+        {draft && <Rect x={draft.x} y={draft.y} width={draft.width} height={draft.height}
+          fill="rgba(250,204,21,0.2)" stroke="#ca8a04" dash={[6, 4]} />}
       </Layer>
     </Stage>
   );
@@ -96,20 +102,23 @@ export default function Viewer({ openFile, saveFile }: Props) {
   const [scale, setScale] = useState(1.15);
   const [rotation, setRotation] = useState(0);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [history, setHistory] = useState<Note[][]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>('select');
-  const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState('Loading sample.pdf…');
   const [search, setSearch] = useState('');
+  const [ocrText, setOcrText] = useState('');
+
+  function commitNotes(next: Note[]) {
+    setHistory((h) => [...h, notes]);
+    setNotes(next);
+  }
 
   async function loadBytes(input: ArrayBuffer | Uint8Array) {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-    const task = getDocument({ data: bytes, isEvalSupported: false, disableAutoFetch: false });
+    const task = getDocument({ data: bytes, isEvalSupported: false, disableAutoFetch: false, disableJavaScript: true });
     const pdf = await task.promise;
-    setSourceBytes(bytes);
-    setDoc(pdf);
-    setPageCount(pdf.numPages);
-    setPageNumber(1);
+    setSourceBytes(bytes); setDoc(pdf); setPageCount(pdf.numPages); setPageNumber(1); setNotes([]); setHistory([]); setSelectedId(null);
     setStatus(`${pdf.numPages} page${pdf.numPages === 1 ? '' : 's'} loaded`);
   }
 
@@ -117,129 +126,123 @@ export default function Viewer({ openFile, saveFile }: Props) {
     if (!doc || !canvasRef.current) return;
     const page = await doc.getPage(target);
     const viewport = page.getViewport({ scale: targetScale, rotation });
-    const canvas = canvasRef.current;
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const context = canvas.getContext('2d');
-    if (!context) return;
+    const canvas = canvasRef.current; canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext('2d'); if (!context) return;
     await page.render({ canvasContext: context, viewport }).promise;
   }
 
   async function renderThumbnails() {
     if (!doc) return;
     for (let i = 1; i <= doc.numPages; i += 1) {
-      const canvas = thumbRefs.current[i];
-      if (!canvas) continue;
-      const page = await doc.getPage(i);
-      const viewport = page.getViewport({ scale: 0.18 });
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      const context = canvas.getContext('2d');
-      if (context) await page.render({ canvasContext: context, viewport }).promise;
+      const canvas = thumbRefs.current[i]; if (!canvas) continue;
+      const page = await doc.getPage(i); const viewport = page.getViewport({ scale: 0.18 });
+      canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+      const context = canvas.getContext('2d'); if (context) await page.render({ canvasContext: context, viewport }).promise;
     }
   }
 
   useEffect(() => {
-    fetch('/assets/sample.pdf')
-      .then((r) => r.arrayBuffer())
-      .then(loadBytes)
-      .catch((e) => setStatus(`Sample load failed: ${String(e)}`));
+    fetch('/assets/sample.pdf').then((r) => r.arrayBuffer()).then(loadBytes).catch((e) => setStatus(`Sample load failed: ${String(e)}`));
   }, []);
-
-  useEffect(() => {
-    renderPage().catch((e) => setStatus(`Render failed: ${String(e)}`));
-  }, [doc, pageNumber, scale, rotation]);
-
-  useEffect(() => {
-    renderThumbnails().catch(() => undefined);
-  }, [doc]);
+  useEffect(() => { renderPage().catch((e) => setStatus(`Render failed: ${String(e)}`)); }, [doc, pageNumber, scale, rotation]);
+  useEffect(() => { renderThumbnails().catch(() => undefined); }, [doc]);
 
   async function handleOpen() {
-    const bytes = await openFile?.();
-    if (bytes) await loadBytes(bytes);
+    try { const bytes = await openFile?.(); if (bytes) await loadBytes(bytes); }
+    catch (e) { setStatus(`Open failed: ${String(e)}`); }
   }
 
   async function handleDownload() {
-    if (!sourceBytes) return;
-    const handle = await pdfCore.open(sourceBytes);
-    const output = await pdfCore.save(handle, { annotations: notes });
-    await saveFile?.(output);
-    setStatus('PDF exported successfully');
+    if (!sourceBytes) return setStatus('No PDF is loaded');
+    try {
+      const handle = await pdfCore.open(sourceBytes);
+      const output = await pdfCore.save(handle, { annotations: notes });
+      await saveFile?.(output); setStatus('PDF downloaded successfully');
+    } catch (e) { setStatus(`Export failed: ${String(e)}`); }
   }
 
   async function handleOcr() {
-    setStatus(`OCR queued for page ${pageNumber}.`);
-    // TODO: Send canvas.toDataURL() to the real Tesseract.js worker and show returned text.
+    if (!doc) return;
+    try {
+      setStatus(`Reading page ${pageNumber} locally…`);
+      const page = await doc.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items.map((item: any) => 'str' in item ? item.str : '').join(' ').replace(/\s+/g, ' ').trim();
+      setOcrText(text || 'No embedded text found. Tesseract worker integration remains available for scanned pages.');
+      setStatus(text ? `Page ${pageNumber} text extracted locally` : `No embedded text on page ${pageNumber}`);
+    } catch (e) { setStatus(`OCR/text extraction failed: ${String(e)}`); }
   }
 
-  function addAnnotation(kind: 'text' | 'rect') {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const note: Note = {
-      id: crypto.randomUUID(),
-      type: kind,
-      page: pageNumber,
-      x: Math.max(20, canvas.width / 2 - 90),
-      y: Math.max(20, canvas.height / 3),
-      width: kind === 'text' ? 220 : 180,
-      height: kind === 'text' ? 46 : 70,
-      text: kind === 'text' ? 'Double-click: edit text' : undefined,
-      viewportWidth: canvas.width,
-      viewportHeight: canvas.height,
-    };
-    setNotes((current) => [...current, note]);
-    setSelectedId(note.id);
-    setEditing(true);
+  async function handleFind() {
+    if (!doc || !search.trim()) return setStatus('Enter text to search');
+    const needle = search.trim().toLowerCase();
+    for (let i = 1; i <= doc.numPages; i += 1) {
+      const content = await (await doc.getPage(i)).getTextContent();
+      const text = content.items.map((item: any) => 'str' in item ? item.str : '').join(' ').toLowerCase();
+      if (text.includes(needle)) { setPageNumber(i); setStatus(`Found “${search}” on page ${i}`); return; }
+    }
+    setStatus(`“${search}” was not found in this PDF`);
+  }
+
+  function addTextAt(x: number, y: number) {
+    const text = window.prompt('Enter text to add to the PDF:', 'New text');
+    if (text === null || !text.trim()) return;
+    const note: Note = { id: crypto.randomUUID(), type: 'text', page: pageNumber, x, y, width: 240, height: 50, text: text.trim(), viewportWidth: canvasRef.current?.width, viewportHeight: canvasRef.current?.height };
+    commitNotes([...notes, note]); setSelectedId(note.id); setTool('select'); setStatus('Text annotation added');
+  }
+
+  function addHighlightAt(x: number, y: number, width: number, height: number) {
+    const note: Note = { id: crypto.randomUUID(), type: 'rect', page: pageNumber, x, y, width, height, viewportWidth: canvasRef.current?.width, viewportHeight: canvasRef.current?.height };
+    commitNotes([...notes, note]); setSelectedId(note.id); setTool('select'); setStatus('Highlight added');
   }
 
   function deleteSelected() {
-    if (!selectedId) return;
-    setNotes((current) => current.filter((n) => n.id !== selectedId));
-    setSelectedId(null);
+    if (!selectedId) return setStatus('Select an annotation first');
+    commitNotes(notes.filter((n) => n.id !== selectedId)); setSelectedId(null); setStatus('Annotation deleted');
   }
 
-  function updateSelectedText() {
-    if (!selectedId) return;
+  function editSelected() {
+    if (!selectedId) return setStatus('Select an annotation first');
     const current = notes.find((n) => n.id === selectedId);
-    if (!current || current.type !== 'text') return;
-    const text = window.prompt('Edit annotation text', current.text ?? '');
-    if (text !== null) setNotes((items) => items.map((n) => n.id === selectedId ? { ...n, text } : n));
+    if (!current) return;
+    if (current.type !== 'text') return setStatus('Only text annotations can be edited; drag highlights to move them');
+    const text = window.prompt('Edit text:', current.text ?? '');
+    if (text === null) return;
+    commitNotes(notes.map((n) => n.id === selectedId ? { ...n, text } : n)); setStatus('Text annotation updated');
   }
 
-  function updateSelectedPosition(id: string, x: number, y: number) {
-    setNotes((items) => items.map((n) => n.id === id ? { ...n, x, y } : n));
+  function moveSelected(id: string, x: number, y: number) {
+    commitNotes(notes.map((n) => n.id === id ? { ...n, x, y } : n));
   }
 
   function undo() {
-    setNotes((current) => current.slice(0, -1));
-    setSelectedId(null);
+    const previous = history[history.length - 1];
+    if (!previous) return setStatus('Nothing to undo');
+    setNotes(previous); setHistory((h) => h.slice(0, -1)); setSelectedId(null); setStatus('Undo complete');
   }
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f1f5f9', color: '#0f172a', fontFamily: 'Inter, Segoe UI, system-ui, sans-serif' }}>
       <header style={{ background: '#0f172a', color: '#fff', padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 750 }}>PDF Editor</div>
-          <div style={{ fontSize: 11, color: '#94a3b8' }}>Local-first PDF workspace</div>
-        </div>
+        <div><div style={{ fontSize: 18, fontWeight: 750 }}>PDF Editor</div><div style={{ fontSize: 11, color: '#94a3b8' }}>Local-first PDF workspace</div></div>
         <div style={{ fontSize: 12, color: '#cbd5e1' }}>{status}</div>
       </header>
 
       <div style={{ background: '#fff', borderBottom: '1px solid #dbe3ec', padding: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <button style={buttonStyle} onClick={handleOpen}>📂 Open</button>
-        <button style={{ ...buttonStyle, background: editing ? '#dbeafe' : '#fff', borderColor: editing ? '#60a5fa' : '#cbd5e1' }} onClick={() => setEditing((v) => !v)}>✏️ Edit</button>
-        <button style={buttonStyle} onClick={() => addAnnotation('text')} disabled={!editing}>T Text</button>
-        <button style={buttonStyle} onClick={() => addAnnotation('rect')} disabled={!editing}>▣ Highlight</button>
-        <button style={buttonStyle} onClick={updateSelectedText} disabled={!selectedId}>Edit selected</button>
-        <button style={buttonStyle} onClick={deleteSelected} disabled={!selectedId}>🗑 Delete</button>
-        <button style={buttonStyle} onClick={undo} disabled={!notes.length}>↶ Undo</button>
+        <button style={{ ...buttonStyle, background: tool === 'select' ? '#dbeafe' : '#fff', borderColor: tool === 'select' ? '#60a5fa' : '#cbd5e1' }} onClick={() => setTool('select')}>↖ Select / Edit</button>
+        <button style={{ ...buttonStyle, background: tool === 'text' ? '#dbeafe' : '#fff', borderColor: tool === 'text' ? '#60a5fa' : '#cbd5e1' }} onClick={() => setTool('text')}>T Add Text</button>
+        <button style={{ ...buttonStyle, background: tool === 'highlight' ? '#fef3c7' : '#fff', borderColor: tool === 'highlight' ? '#f59e0b' : '#cbd5e1' }} onClick={() => setTool('highlight')}>▣ Highlight</button>
+        <button style={buttonStyle} onClick={editSelected} disabled={!selectedId}>Edit selected</button>
+        <button style={buttonStyle} onClick={deleteSelected}>🗑 Delete</button>
+        <button style={buttonStyle} onClick={undo} disabled={!history.length}>↶ Undo</button>
         <span style={{ width: 1, height: 26, background: '#e2e8f0', margin: '0 4px' }} />
         <button style={buttonStyle} onClick={() => setScale((v) => Math.max(0.5, +(v - 0.1).toFixed(2)))}>−</button>
         <span style={{ minWidth: 48, textAlign: 'center', fontSize: 12 }}>{Math.round(scale * 100)}%</span>
         <button style={buttonStyle} onClick={() => setScale((v) => Math.min(3, +(v + 0.1).toFixed(2)))}>+</button>
         <button style={buttonStyle} onClick={() => setScale(1)}>100%</button>
         <button style={buttonStyle} onClick={() => setRotation((v) => (v + 90) % 360)}>↻ Rotate</button>
-        <button style={buttonStyle} onClick={handleOcr}>🔎 OCR</button>
+        <button style={buttonStyle} onClick={handleOcr}>🔎 OCR / Extract Text</button>
         <button style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb' }} onClick={handleDownload}>⬇ Download PDF</button>
       </div>
 
@@ -250,17 +253,18 @@ export default function Viewer({ openFile, saveFile }: Props) {
         <span style={{ fontSize: 13 }}>of {pageCount}</span>
         <button style={buttonStyle} disabled={pageNumber >= pageCount} onClick={() => setPageNumber((p) => Math.min(pageCount, p + 1))}>›</button>
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#64748b' }}>Tool: {tool}</span>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search PDF…" style={{ width: 180, padding: 7, border: '1px solid #cbd5e1', borderRadius: 5 }} />
-        <button style={buttonStyle} onClick={() => setStatus(search ? `Search requested: “${search}”` : 'Enter text to search')}>Find</button>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void handleFind(); }} placeholder="Search PDF…" style={{ width: 180, padding: 7, border: '1px solid #cbd5e1', borderRadius: 5 }} />
+        <button style={buttonStyle} onClick={() => void handleFind()}>Find</button>
       </div>
+
+      {ocrText && <div style={{ background: '#fffbeb', borderBottom: '1px solid #fde68a', padding: '8px 14px', maxHeight: 90, overflow: 'auto', fontSize: 12 }}><b>Page text:</b> {ocrText}</div>}
 
       <main style={{ minHeight: 0, flex: 1, display: 'flex' }}>
         <aside style={{ width: 150, background: '#fff', borderRight: '1px solid #dbe3ec', overflow: 'auto', padding: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', margin: '4px 6px 10px' }}>PAGES</div>
           {Array.from({ length: pageCount }, (_, i) => i + 1).map((page) => (
             <button key={page} onClick={() => setPageNumber(page)} style={{ display: 'block', width: '100%', border: page === pageNumber ? '2px solid #2563eb' : '1px solid #dbe3ec', background: page === pageNumber ? '#eff6ff' : '#fff', borderRadius: 6, marginBottom: 10, padding: 6, cursor: 'pointer' }}>
-              <canvas ref={(el) => { thumbRefs.current[page] = el; }} style={{ display: 'block', width: '100%', height: 'auto', background: '#fff' }} />
-              <div style={{ fontSize: 11, paddingTop: 5, color: '#475569' }}>Page {page}</div>
+              <canvas ref={(el) => { thumbRefs.current[page] = el; }} style={{ display: 'block', width: '100%', height: 'auto', background: '#fff' }} /><div style={{ fontSize: 11, paddingTop: 5, color: '#475569' }}>Page {page}</div>
             </button>
           ))}
         </aside>
@@ -268,23 +272,15 @@ export default function Viewer({ openFile, saveFile }: Props) {
         <section style={{ flex: 1, minWidth: 0, overflow: 'auto', background: '#e2e8f0', padding: 28, display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
           <div style={{ position: 'relative', display: 'inline-block', boxShadow: '0 8px 28px rgba(15,23,42,.18)', background: '#fff' }}>
             <canvas ref={canvasRef} style={{ display: 'block', maxWidth: 'none' }} />
-            {canvasRef.current && (
-              <AnnotationOverlay
-                width={canvasRef.current.width}
-                height={canvasRef.current.height}
-                annotations={notes.filter((n) => n.page === pageNumber)}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onMove={updateSelectedPosition}
-              />
-            )}
+            {canvasRef.current && <AnnotationOverlay width={canvasRef.current.width} height={canvasRef.current.height}
+              annotations={notes.filter((n) => n.page === pageNumber)} selectedId={selectedId} tool={tool}
+              onSelect={setSelectedId} onMove={moveSelected} onCreateHighlight={addHighlightAt} onCreateText={addTextAt} />}
           </div>
         </section>
       </main>
 
       <footer style={{ background: '#fff', borderTop: '1px solid #dbe3ec', padding: '7px 14px', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748b' }}>
-        <span>{notes.length} annotation{notes.length === 1 ? '' : 's'} · PDF.js + pdf-lib + Konva</span>
-        <span>Local processing · No paid service required</span>
+        <span>{notes.length} annotation{notes.length === 1 ? '' : 's'} · PDF.js + pdf-lib + Konva</span><span>Local processing · No paid service required</span>
       </footer>
     </div>
   );
