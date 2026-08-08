@@ -3,8 +3,8 @@
 A cross-platform PDF workspace inspired by the usability of Adobe Acrobat and the broad tool coverage of PDFLeader, but designed around a different promise: **no account, no paid API, and no document upload is required for core editing**.
 
 Reference products:
-- [PDFLeader](https://pdfleader.com/) — broad PDF conversion, organization and editing workflow.
-- [Adobe Acrobat](https://www.adobe.com/acrobat/) — mature editing, annotation, forms, signing and page-management UX.
+- PDFLeader — broad PDF conversion, organization and editing workflow.
+- Adobe Acrobat — mature editing, annotation, forms, signing and page-management UX.
 
 This project uses those products as feature/UX references; it does not copy proprietary code, assets, branding, or services.
 
@@ -88,7 +88,7 @@ This is reliable for many ordinary text PDFs, but it does **not** guarantee pres
 
 ### Password/encrypted PDFs
 
-The current `pdf-lib` version does not provide full encrypted-PDF modification support. The app must not pretend that a password-protected PDF is editable when the underlying library cannot safely process it. Password/encryption support belongs in a dedicated local PDF engine before shipping that feature. citeturn4search0turn4search1
+The current `pdf-lib` version does not provide full encrypted-PDF modification support. The app must not pretend that a password-protected PDF is editable when the underlying library cannot safely process it. Password/encryption support belongs in a dedicated local PDF engine before shipping that feature.
 
 ### Compression
 
