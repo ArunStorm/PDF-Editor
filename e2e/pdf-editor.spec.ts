@@ -11,8 +11,9 @@ test('edits PDF text inline and downloads a valid PDF', async ({ page }) => {
 
   const textLayer = page.locator('[aria-label="PDF text layer"]');
   await expect(textLayer).toBeVisible({ timeout: 15000 });
+  console.log('TEXT_LAYER_HTML=', await textLayer.innerHTML());
+  console.log('PAGE_ERRORS=', errors.join(' | '));
   await expect.poll(async () => await textLayer.locator('span[title="Click to edit this PDF text"]').count(), { timeout: 15000 }).toBeGreaterThan(0);
-  if (errors.length) console.log(errors.join('\n'));
 
   const textTarget = textLayer.locator('span[title="Click to edit this PDF text"]').first();
   await textTarget.click();
