@@ -1,5 +1,5 @@
 jest.mock('pdf-lib', () => ({ PDFDocument: { load: jest.fn(async (bytes: Uint8Array) => ({ bytes })) } }));
-import { open, renderPage } from './pdfCoreStub';
+import { open, renderPage } from './pdfCoreStub.js';
 
 test('open accepts PDF bytes', async () => {
   const handle = await open(new Uint8Array([37, 80, 68, 70]));
