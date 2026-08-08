@@ -1,0 +1,17 @@
+{
+  "name": "@pdf-editor/pdf-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/Viewer.tsx",
+  "types": "./src/Viewer.tsx",
+  "dependencies": {
+    "@pdf-editor/pdf-core": "workspace:*",
+    "konva": "^9.3.16",
+    "pdfjs-dist": "^5.4.54",
+    "react": "^19.1.1",
+    "react-konva": "^19.0.7",
+    "tesseract.js": "^6.0.1"
+  },
+  "scripts": { "typecheck": "tsc --noEmit", "lint": "tsc --noEmit" }
+}

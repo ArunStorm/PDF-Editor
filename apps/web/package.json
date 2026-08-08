@@ -1,0 +1,9 @@
+{
+  "name": "@pdf-editor/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "tsc -b && vite build", "typecheck": "tsc --noEmit", "lint": "tsc --noEmit" },
+  "dependencies": { "@pdf-editor/pdf-core": "workspace:*", "@pdf-editor/pdf-ui": "workspace:*", "react": "^19.1.1", "react-dom": "^19.1.1" },
+  "devDependencies": { "@vitejs/plugin-react": "^5.0.2", "vite": "^7.1.2", "typescript": "^5.9.2" }
+}
