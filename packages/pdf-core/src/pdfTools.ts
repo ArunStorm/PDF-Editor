@@ -3,9 +3,10 @@ import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 export type PageRange = { start: number; end: number };
 
 /** Merge complete PDFs locally. No network or server is involved. */
-export async function mergePdfs(inputs: ArrayBuffer[] | Uint8Array[]): Promise<Uint8Array> {
+export async function mergePdfs(inputs: ArrayBuffer[] | Uint8Array[] | ArrayBufferLike[] | ArrayBuffer | Uint8Array | Promise<ArrayBuffer>[]): Promise<Uint8Array> {
   const output = await PDFDocument.create();
-  for (const input of inputs) {
+  for (const pending of inputs as Array<any>) {
+    const input = await pending;
     const source = await PDFDocument.load(input);
     const pages = await output.copyPages(source, source.getPageIndices());
     pages.forEach((page) => output.addPage(page));
@@ -21,6 +22,7 @@ export async function splitPdf(input: ArrayBuffer | Uint8Array, ranges: PageRang
     const last = Math.max(first, Math.min(end, source.getPageCount()));
     return Array.from({ length: last - first + 1 }, (_, i) => first - 1 + i);
   });
+  if (!indexes.length) throw new Error('No valid pages selected.');
   const output = await PDFDocument.create();
   const pages = await output.copyPages(source, indexes);
   pages.forEach((page) => output.addPage(page));
@@ -31,6 +33,7 @@ export async function splitPdf(input: ArrayBuffer | Uint8Array, ranges: PageRang
 export async function reorderPages(input: ArrayBuffer | Uint8Array, order: number[]): Promise<Uint8Array> {
   const source = await PDFDocument.load(input);
   const indexes = order.map((page) => page - 1).filter((index) => index >= 0 && index < source.getPageCount());
+  if (!indexes.length) throw new Error('No valid page order supplied.');
   const output = await PDFDocument.create();
   const pages = await output.copyPages(source, indexes);
   pages.forEach((page) => output.addPage(page));
@@ -53,18 +56,13 @@ export async function deletePages(input: ArrayBuffer | Uint8Array, pagesToDelete
 export async function rotatePage(input: ArrayBuffer | Uint8Array, pageNumber: number, angle = 90): Promise<Uint8Array> {
   const document = await PDFDocument.load(input);
   const page = document.getPage(pageNumber - 1);
+  if (!page) throw new Error('Page does not exist.');
   const current = page.getRotation().angle;
   page.setRotation(degrees((current + angle) % 360));
   return document.save({ useObjectStreams: true });
 }
 
-export type MetadataOptions = {
-  title?: string;
-  author?: string;
-  subject?: string;
-  keywords?: string[];
-  creator?: string;
-};
+export type MetadataOptions = { title?: string; author?: string; subject?: string; keywords?: string[]; creator?: string };
 
 export async function updateMetadata(input: ArrayBuffer | Uint8Array, options: MetadataOptions): Promise<Uint8Array> {
   const document = await PDFDocument.load(input);
@@ -83,15 +81,7 @@ export async function addWatermark(input: ArrayBuffer | Uint8Array, text: string
   const font = await document.embedFont(StandardFonts.HelveticaBold);
   for (const page of document.getPages()) {
     const { width, height } = page.getSize();
-    page.drawText(text, {
-      x: width * 0.2,
-      y: height * 0.45,
-      size: Math.max(18, Math.min(width, height) / 12),
-      font,
-      color: rgb(0.35, 0.35, 0.35),
-      opacity: Math.max(0.03, Math.min(1, opacity)),
-      rotate: degrees(35),
-    });
+    page.drawText(text, { x: width * 0.2, y: height * 0.45, size: Math.max(18, Math.min(width, height) / 12), font, color: rgb(0.35, 0.35, 0.35), opacity: Math.max(0.03, Math.min(1, opacity)), rotate: degrees(35) });
   }
   return document.save({ useObjectStreams: true });
 }
