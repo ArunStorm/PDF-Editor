@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { open, save, type Annotation } from './pdfCoreStub.js';
+import { open, save, type Annotation } from './pdfCoreStub';
 
 describe('PDF save pipeline', () => {
   it('creates a valid PDF and writes a formatted replacement', async () => {
