@@ -13,24 +13,88 @@ type TextBlock = { items: Array<MeasuredItem | OcrWord>; lines: Array<TextLine |
 
 const toolbarButton: React.CSSProperties = { border: '1px solid #d0d5dd', background: '#fff', color: '#101828', borderRadius: 4, minWidth: 26, height: 26, padding: '0 6px', cursor: 'pointer', fontSize: 12 };
 const toolbarInput: React.CSSProperties = { border: '1px solid #d0d5dd', borderRadius: 4, height: 26, padding: '0 5px', fontSize: 12, background: '#fff', color: '#101828' };
-function typography(fontName = '', pdfFamily = '') { const name = fontName.toLowerCase(); const family = pdfFamily || (/times|serif/.test(name) ? 'Times New Roman, serif' : /courier|mono/.test(name) ? 'Courier New, monospace' : 'Arial, Helvetica, sans-serif'); return { family, fontWeight: /bold|black|heavy/.test(name) ? '700' : '400', fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal' }; }
-function supportedFamily(family: string) { if (/times|serif/i.test(family)) return 'Times New Roman, serif'; if (/courier|mono/i.test(family)) return 'Courier New, monospace'; return 'Arial, Helvetica, sans-serif'; }
-function sameTypography(a: MeasuredItem, b: MeasuredItem) { return a.family === b.family && a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && Math.abs(a.fontSize - b.fontSize) <= Math.max(1, a.fontSize * 0.12); }
+
+function typography(fontName = '', pdfFamily = '') {
+  const name = `${fontName} ${pdfFamily}`.toLowerCase();
+  const family = /times|roman|serif/.test(name) && !/sans|arial|helvetica/.test(name)
+    ? 'Times New Roman, serif'
+    : /courier|mono/.test(name)
+      ? 'Courier New, monospace'
+      : 'Arial, Helvetica, sans-serif';
+  return { family, fontWeight: /bold|black|heavy/.test(name) ? '700' : '400', fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal' };
+}
+
+function supportedFamily(family: string) {
+  if (/times|roman|serif/i.test(family) && !/sans|arial|helvetica/i.test(family)) return 'Times New Roman, serif';
+  if (/courier|mono/i.test(family)) return 'Courier New, monospace';
+  return 'Arial, Helvetica, sans-serif';
+}
+
+function sameTypography(a: MeasuredItem, b: MeasuredItem) {
+  return a.family === b.family && a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && Math.abs(a.fontSize - b.fontSize) <= Math.max(1.5, a.fontSize * 0.2);
+}
+
 function isBullet(text: string) { return /^[\s]*(?:[•●▪◦‣⁃]|[-*]|\d+[.)])(?:\s|$)/.test(text); }
-function lineText(items: MeasuredItem[]) { return items.reduce((result, item, index) => { if (index === 0) return item.str; const previous = items[index - 1]; const previousEndsSpace = /\s$/.test(previous.str); const startsSpace = /^\s/.test(item.str); const punctuation = /^[,.;:!?%)\]}]/.test(item.str); const gap = item.x - previous.right; const needsSpace = !previousEndsSpace && !startsSpace && !punctuation && gap > Math.max(0.8, item.fontSize * 0.08); return result + (needsSpace ? ' ' : '') + item.str; }, ''); }
-function makeBlock(line: TextLine): TextBlock { return { items: [...line.items], lines: [line], text: lineText(line.items), x: line.x, y: line.top, width: line.right - line.x, height: line.bottom - line.top, fontSize: line.fontSize, fontName: line.items[0].fontName, fontFamily: line.family, fontWeight: line.fontWeight, fontStyle: line.fontStyle, lineHeight: Math.max(8, line.bottom - line.top), bullet: line.firstItemBullet }; }
+
+function lineText(items: MeasuredItem[]) {
+  return items.reduce((result, item, index) => {
+    if (index === 0) return item.str;
+    const previous = items[index - 1];
+    const previousEndsSpace = /\s$/.test(previous.str);
+    const startsSpace = /^\s/.test(item.str);
+    const punctuation = /^[,.;:!?%)\]}]/.test(item.str);
+    const gap = item.x - previous.right;
+    const needsSpace = !previousEndsSpace && !startsSpace && !punctuation && gap > Math.max(0.8, item.fontSize * 0.08);
+    return result + (needsSpace ? ' ' : '') + item.str;
+  }, '');
+}
+
+function lineHeightFor(lines: TextLine[], fontSize: number) {
+  const deltas = lines.slice(1).map((line, index) => line.baseline - lines[index].baseline).filter((value) => value > fontSize * 0.55 && value < fontSize * 2.5);
+  const average = deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : fontSize * 1.2;
+  return Math.max(fontSize * 1.08, average);
+}
+
+function makeBlock(line: TextLine): TextBlock {
+  return { items: [...line.items], lines: [line], text: lineText(line.items), x: line.x, y: line.top, width: line.right - line.x, height: line.bottom - line.top, fontSize: line.fontSize, fontName: line.items[0].fontName, fontFamily: line.family, fontWeight: line.fontWeight, fontStyle: line.fontStyle, lineHeight: Math.max(8, line.bottom - line.top), bullet: line.firstItemBullet };
+}
 
 export function groupTextItems(items: TextItem[], viewport: pdfjsLib.PageViewport): TextBlock[] {
-  const pageWidth = viewport.width; const pageScale = viewport.scale || 1;
-  const measured: MeasuredItem[] = items.map((item) => { const transform = pdfjsLib.Util.transform(viewport.transform, item.transform); const fontSize = Math.max(5, Math.hypot(transform[2], transform[3])); const type = typography(item.fontName, item.style?.fontFamily); const ascent = Math.max(0.55, item.style?.ascent ?? 0.9); const descent = Math.min(-0.05, item.style?.descent ?? -0.2); const axisScale = Math.max(0.001, Math.hypot(transform[0], transform[1])); const advanceX = item.width * pageScale * (transform[0] / axisScale); const x1 = transform[4]; const x2 = x1 + advanceX; return { ...item, x: Math.min(x1, x2), right: Math.max(x1, x2), baseline: transform[5], fontSize, top: transform[5] - fontSize * ascent, bottom: transform[5] + Math.abs(fontSize * descent), family: type.family, fontWeight: type.fontWeight, fontStyle: type.fontStyle, height: Math.max(fontSize * 1.05, fontSize * (ascent - descent)) }; }).sort((a, b) => a.baseline - b.baseline || a.x - b.x);
+  const pageWidth = viewport.width;
+  const pageScale = viewport.scale || 1;
+  const measured: MeasuredItem[] = items.map((item) => {
+    const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
+    const fontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
+    const type = typography(item.fontName, item.style?.fontFamily);
+    const ascent = Math.max(0.55, item.style?.ascent ?? 0.9);
+    const descent = Math.min(-0.05, item.style?.descent ?? -0.2);
+    const axisScale = Math.max(0.001, Math.hypot(transform[0], transform[1]));
+    const advanceX = item.width * pageScale * (transform[0] / axisScale);
+    const x1 = transform[4];
+    const x2 = x1 + advanceX;
+    return { ...item, x: Math.min(x1, x2), right: Math.max(x1, x2), baseline: transform[5], fontSize, top: transform[5] - fontSize * ascent, bottom: transform[5] + Math.abs(fontSize * descent), family: type.family, fontWeight: type.fontWeight, fontStyle: type.fontStyle, height: Math.max(fontSize * 1.05, fontSize * (ascent - descent)) };
+  }).sort((a, b) => a.baseline - b.baseline || a.x - b.x);
+
   const lines: TextLine[] = [];
   for (const item of measured) {
-    const tolerance = Math.max(2.5, item.fontSize * 0.45); const candidates = lines.filter((line) => Math.abs(line.baseline - item.baseline) <= tolerance && sameTypography(line.items[0], item) && item.x >= line.x - Math.max(3, item.fontSize * 0.35)); const line = candidates[candidates.length - 1];
-    if (!line) { const bullet = isBullet(item.str); lines.push({ items: [item], x: item.x, right: item.right, baseline: item.baseline, top: item.top, bottom: item.bottom, fontSize: item.fontSize, family: item.family, fontWeight: item.fontWeight, fontStyle: item.fontStyle, bullet, firstItemBullet: bullet }); continue; }
-    const gap = item.x - line.right; const columnGap = Math.max(42, item.fontSize * 4.5); const rightColumn = item.x > pageWidth * 0.52 && line.right < item.x && gap > pageWidth * 0.18;
-    if (gap > columnGap || rightColumn || line.items[line.items.length - 1].hasEOL) { const bullet = isBullet(item.str); lines.push({ items: [item], x: item.x, right: item.right, baseline: item.baseline, top: item.top, bottom: item.bottom, fontSize: item.fontSize, family: item.family, fontWeight: item.fontWeight, fontStyle: item.fontStyle, bullet, firstItemBullet: bullet }); continue; }
+    const tolerance = Math.max(2.5, item.fontSize * 0.5);
+    const candidates = lines.filter((line) => {
+      if (Math.abs(line.baseline - item.baseline) > tolerance) return false;
+      if (!sameTypography(line.items[0], item)) return false;
+      if (item.x < line.x - Math.max(4, item.fontSize * 0.5)) return false;
+      const gap = item.x - line.right;
+      const rightColumn = item.x > pageWidth * 0.52 && line.right < item.x && gap > pageWidth * 0.14;
+      return gap <= Math.max(100, item.fontSize * 8) && !rightColumn;
+    });
+    const line = candidates.sort((a, b) => Math.abs(a.baseline - item.baseline) - Math.abs(b.baseline - item.baseline)).at(0);
+    if (!line || line.items[line.items.length - 1].hasEOL) {
+      const bullet = isBullet(item.str);
+      lines.push({ items: [item], x: item.x, right: item.right, baseline: item.baseline, top: item.top, bottom: item.bottom, fontSize: item.fontSize, family: item.family, fontWeight: item.fontWeight, fontStyle: item.fontStyle, bullet, firstItemBullet: bullet });
+      continue;
+    }
     line.items.push(item); line.right = Math.max(line.right, item.right); line.top = Math.min(line.top, item.top); line.bottom = Math.max(line.bottom, item.bottom);
   }
+
   lines.sort((a, b) => a.baseline - b.baseline || a.x - b.x);
   const blocks: TextBlock[] = [];
   for (const line of lines) {
@@ -39,22 +103,47 @@ export function groupTextItems(items: TextItem[], viewport: pdfjsLib.PageViewpor
       for (const block of blocks) {
         const previousLine = block.lines[block.lines.length - 1] as TextLine;
         if (!previousLine || line.baseline <= previousLine.baseline || !sameTypography(previousLine.items[0], line.items[0])) continue;
-        const verticalGap = line.top - previousLine.bottom; const lineHeight = Math.max(previousLine.bottom - previousLine.top, line.bottom - line.top, line.fontSize * 1.05); const startDelta = Math.abs(line.x - previousLine.x); const horizontalOverlap = line.x < previousLine.right && previousLine.x < line.right; const compatibleIndent = startDelta <= Math.max(24, line.fontSize * 2.2); const continuationOfBullet = block.bullet && line.x >= previousLine.x; const paragraphGap = Math.max(7, lineHeight * 0.95);
-        if (verticalGap < -line.fontSize * 0.45 || verticalGap > paragraphGap || (!horizontalOverlap && !compatibleIndent && !continuationOfBullet)) continue;
-        const score = Math.max(0, verticalGap) * 4 + startDelta; if (!best || score < best.score) best = { block, score };
+        const verticalGap = line.top - previousLine.bottom;
+        const glyphHeight = Math.max(previousLine.bottom - previousLine.top, line.bottom - line.top);
+        const expectedLineGap = Math.max(previousLine.fontSize * 1.15, block.lineHeight);
+        const maxVerticalGap = Math.max(10, expectedLineGap * 0.75);
+        const startDelta = Math.abs(line.x - previousLine.x);
+        const horizontalOverlap = line.x < previousLine.right && previousLine.x < line.right;
+        const compatibleIndent = startDelta <= Math.max(28, line.fontSize * 2.8);
+        const sameColumn = Math.abs(line.x - previousLine.x) <= Math.max(80, line.fontSize * 6) || horizontalOverlap;
+        const continuationOfBullet = block.bullet && line.x >= previousLine.x - 2;
+        const likelyNewParagraph = verticalGap > maxVerticalGap || (verticalGap > glyphHeight * 0.95 && !compatibleIndent);
+        if (verticalGap < -line.fontSize * 0.45 || likelyNewParagraph || !sameColumn || (!horizontalOverlap && !compatibleIndent && !continuationOfBullet)) continue;
+        const score = Math.max(0, verticalGap) * 5 + startDelta;
+        if (!best || score < best.score) best = { block, score };
       }
     }
     if (!best) { blocks.push(makeBlock(line)); continue; }
-    const block = best.block; block.lines.push(line); block.items.push(...line.items); block.text += `\n${lineText(line.items)}`; block.x = Math.min(block.x, line.x); block.y = Math.min(block.y, line.top); block.width = Math.max(block.width, line.right - block.x); block.height = line.bottom - block.y; block.lineHeight = Math.max(block.lineHeight, line.bottom - line.top);
+    const block = best.block;
+    block.lines.push(line); block.items.push(...line.items); block.text += `\n${lineText(line.items)`}`; block.x = Math.min(block.x, line.x); block.y = Math.min(block.y, line.top); block.width = Math.max(block.width, line.right - block.x); block.height = Math.max(block.height, line.bottom - block.y); block.lineHeight = lineHeightFor(block.lines as TextLine[], block.fontSize);
   }
   return blocks;
 }
 
 function groupOcrWords(words: OcrWord[]): TextBlock[] {
-  const sorted = words.filter((word) => word.text.trim() && (word.confidence === undefined || word.confidence >= 20)).sort((a, b) => a.y - b.y || a.x - b.x); const lines: OcrLine[] = [];
-  for (const word of sorted) { const center = word.y + word.height / 2; const candidate = lines.find((line) => Math.abs((line.y + line.bottom) / 2 - center) <= Math.max(4, word.height * 0.55) && word.x >= line.x - Math.max(4, word.height * 0.25) && word.x - line.right <= Math.max(24, word.height * 2.5)); if (!candidate) { lines.push({ words: [word], x: word.x, right: word.x + word.width, y: word.y, bottom: word.y + word.height, fontSize: Math.max(5, word.height * 0.8), bullet: isBullet(word.text) }); continue; } candidate.words.push(word); candidate.right = Math.max(candidate.right, word.x + word.width); candidate.x = Math.min(candidate.x, word.x); candidate.y = Math.min(candidate.y, word.y); candidate.bottom = Math.max(candidate.bottom, word.y + word.height); candidate.fontSize = Math.max(candidate.fontSize, word.height * 0.8); candidate.bullet ||= isBullet(word.text); }
-  lines.sort((a, b) => a.y - b.y || a.x - b.x); const blocks: TextBlock[] = []; const textOf = (line: OcrLine) => line.words.map((word) => word.text.trim()).filter(Boolean).join(' ');
-  for (const line of lines) { const previous = blocks[blocks.length - 1]; const previousLine = previous?.lines[previous.lines.length - 1] as OcrLine | undefined; if (!previous || !previousLine || line.bullet) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; } const gap = line.y - previousLine.bottom; const startDelta = Math.abs(line.x - previousLine.x); if (gap < -line.fontSize * 0.45 || gap > Math.max(8, line.fontSize * 1.0) || startDelta > Math.max(24, line.fontSize * 2.2)) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; } previous.lines.push(line); previous.items.push(...line.words); previous.text += `\n${textOf(line)}`; previous.x = Math.min(previous.x, line.x); previous.y = Math.min(previous.y, line.y); previous.width = Math.max(previous.width, line.right - previous.x); previous.height = line.bottom - previous.y; previous.lineHeight = Math.max(previous.lineHeight, line.bottom - line.y); }
+  const sorted = words.filter((word) => word.text.trim() && (word.confidence === undefined || word.confidence >= 20)).sort((a, b) => a.y - b.y || a.x - b.x);
+  const lines: OcrLine[] = [];
+  for (const word of sorted) {
+    const center = word.y + word.height / 2;
+    const candidate = lines.find((line) => Math.abs((line.y + line.bottom) / 2 - center) <= Math.max(4, word.height * 0.55) && word.x >= line.x - Math.max(4, word.height * 0.25) && word.x - line.right <= Math.max(24, word.height * 2.5));
+    if (!candidate) { lines.push({ words: [word], x: word.x, right: word.x + word.width, y: word.y, bottom: word.y + word.height, fontSize: Math.max(5, word.height * 0.8), bullet: isBullet(word.text) }); continue; }
+    candidate.words.push(word); candidate.right = Math.max(candidate.right, word.x + word.width); candidate.x = Math.min(candidate.x, word.x); candidate.y = Math.min(candidate.y, word.y); candidate.bottom = Math.max(candidate.bottom, word.y + word.height); candidate.fontSize = Math.max(candidate.fontSize, word.height * 0.8); candidate.bullet ||= isBullet(word.text);
+  }
+  lines.sort((a, b) => a.y - b.y || a.x - b.x);
+  const blocks: TextBlock[] = [];
+  const textOf = (line: OcrLine) => line.words.map((word) => word.text.trim()).filter(Boolean).join(' ');
+  for (const line of lines) {
+    const previous = blocks[blocks.length - 1]; const previousLine = previous?.lines[previous.lines.length - 1] as OcrLine | undefined;
+    if (!previous || !previousLine || line.bullet) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; }
+    const gap = line.y - previousLine.bottom; const startDelta = Math.abs(line.x - previousLine.x);
+    if (gap < -line.fontSize * 0.45 || gap > Math.max(10, line.fontSize * 1.5) || startDelta > Math.max(28, line.fontSize * 2.8)) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; }
+    previous.lines.push(line); previous.items.push(...line.words); previous.text += `\n${textOf(line)}`; previous.x = Math.min(previous.x, line.x); previous.y = Math.min(previous.y, line.y); previous.width = Math.max(previous.width, line.right - previous.x); previous.height = Math.max(previous.height, line.bottom - previous.y); previous.lineHeight = Math.max(previous.lineHeight, line.y - previousLine.y);
+  }
   return blocks;
 }
 
@@ -64,6 +153,6 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
   useEffect(() => { if (editingIndex === null || !inputRef.current) return; const block = blocks[editingIndex]; if (!block) return; setEditFontSize(block.fontSize); setEditFontFamily(supportedFamily(block.fontFamily)); setEditFontWeight(block.fontWeight); setEditFontStyle(block.fontStyle); committedEditRef.current = false; inputRef.current.focus(); const range = document.createRange(); range.selectNodeContents(inputRef.current); const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range); }, [editingIndex, blocks, viewport.scale, viewport.rotation]);
   if (!enabled) return <div aria-label="PDF text layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
   return <div ref={rootRef} aria-label="PDF text layer" data-text-item-count={source === 'ocr' ? ocrWords.length : items.length} data-text-block-count={blocks.length} data-text-source={source} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'auto' }}>
-    {blocks.map((block, index) => { const editing = editingIndex === index; const activeFontSize = editing && editFontSize > 0 ? editFontSize : block.fontSize; const activeFamily = editing ? editFontFamily : supportedFamily(block.fontFamily); const activeWeight = editing ? editFontWeight : block.fontWeight; const activeStyle = editing ? editFontStyle : block.fontStyle; const activeLineHeight = Math.max(8, block.lineHeight * (activeFontSize / Math.max(1, block.fontSize))); const selection: TextSelection = { text: block.text, x: block.x, y: block.y, width: Math.max(8, block.width), height: Math.max(activeLineHeight, block.height * (activeFontSize / Math.max(1, block.fontSize))), fontSize: activeFontSize, fontName: block.fontName, fontFamily: activeFamily, fontWeight: activeWeight, fontStyle: activeStyle, lineHeight: activeLineHeight }; const commitEdit = (value: string) => { if (committedEditRef.current) return; const replacement = value.replace(/\u00a0/g, ' ').replace(/\r/g, '').trimEnd(); if (replacement !== block.text || activeFontSize !== block.fontSize || activeFamily !== supportedFamily(block.fontFamily) || activeWeight !== block.fontWeight || activeStyle !== block.fontStyle) { committedEditRef.current = true; onEdit(selection, replacement); } setEditingIndex(null); }; if (editing) return <React.Fragment key={`block-${index}`}><div ref={toolbarRef} role="toolbar" aria-label="PDF text formatting" onMouseDown={(event) => event.preventDefault()} style={{ position: 'absolute', left: block.x, top: Math.max(2, block.y - 38), display: 'flex', alignItems: 'center', gap: 4, padding: 4, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 6, boxShadow: '0 6px 18px rgba(16,24,40,.16)', zIndex: 20, whiteSpace: 'nowrap' }}><select aria-label="Font" value={activeFamily} onChange={(event) => setEditFontFamily(event.target.value)} style={{ ...toolbarInput, width: 130 }}><option value="Arial, Helvetica, sans-serif">Arial / Helvetica</option><option value="Times New Roman, serif">Times New Roman</option><option value="Courier New, monospace">Courier New</option></select><input aria-label="Font size" type="number" min={4} max={96} step={1} value={Math.round(activeFontSize)} onChange={(event) => setEditFontSize(Math.max(4, Math.min(96, Number(event.target.value) || block.fontSize)))} style={{ ...toolbarInput, width: 48 }} /><button type="button" aria-label="Bold" aria-pressed={activeWeight === '700'} onClick={() => setEditFontWeight((value) => value === '700' ? '400' : '700')} style={{ ...toolbarButton, fontWeight: 700, background: activeWeight === '700' ? '#e8f0ff' : '#fff' }}>B</button><button type="button" aria-label="Italic" aria-pressed={activeStyle === 'italic'} onClick={() => setEditFontStyle((value) => value === 'italic' ? 'normal' : 'italic')} style={{ ...toolbarButton, fontStyle: 'italic', background: activeStyle === 'italic' ? '#e8f0ff' : '#fff' }}>I</button><span style={{ fontSize: 10, color: '#667085', padding: '0 3px' }}>Enter = apply</span></div><div ref={inputRef} contentEditable suppressContentEditableWarning role="textbox" aria-label={`Edit PDF text block: ${block.text.split('\n')[0]}`} onBlur={(event) => { if (event.relatedTarget instanceof Node && toolbarRef.current?.contains(event.relatedTarget)) return; commitEdit(event.currentTarget.innerText); }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); commitEdit(event.currentTarget.innerText); } else if (event.key === 'Escape') { event.preventDefault(); committedEditRef.current = true; setEditingIndex(null); } }} style={{ position: 'absolute', left: block.x, top: block.y, width: Math.max(block.width, 60), minHeight: selection.height, padding: 0, margin: 0, border: '2px solid #2563eb', borderRadius: 2, outline: 'none', background: 'rgba(255,255,255,.98)', color: '#111827', fontFamily: activeFamily, fontSize: activeFontSize, fontWeight: activeWeight, fontStyle: activeStyle, lineHeight: `${activeLineHeight}px`, whiteSpace: 'pre-wrap', overflow: 'hidden', boxSizing: 'border-box', cursor: 'text', zIndex: 10 }}>{block.text}</div></React.Fragment>; return <span key={`block-${index}`} data-pdf-text-item="true" data-pdf-text-block="true" title="Click to edit this text block" style={{ position: 'absolute', left: block.x, top: block.y, width: Math.max(2, block.width), height: Math.max(2, block.height), display: 'block', color: 'transparent', background: 'transparent', border: '0', outline: 'none', boxShadow: 'none', cursor: 'text', userSelect: 'none', WebkitTapHighlightColor: 'transparent', whiteSpace: 'pre', overflow: 'hidden', boxSizing: 'border-box' }} onClick={(event) => { event.stopPropagation(); committedEditRef.current = false; setEditingIndex(index); }} />; })}
+    {blocks.map((block, index) => { const editing = editingIndex === index; const activeFontSize = editing && editFontSize > 0 ? editFontSize : block.fontSize; const activeFamily = editing ? editFontFamily : supportedFamily(block.fontFamily); const activeWeight = editing ? editFontWeight : block.fontWeight; const activeStyle = editing ? editFontStyle : block.fontStyle; const activeLineHeight = Math.max(8, block.lineHeight * (activeFontSize / Math.max(1, block.fontSize))); const selection: TextSelection = { text: block.text, x: block.x, y: block.y, width: Math.max(8, block.width), height: Math.max(activeLineHeight, block.height * (activeFontSize / Math.max(1, block.fontSize))), fontSize: activeFontSize, fontName: block.fontName, fontFamily: activeFamily, fontWeight: activeWeight, fontStyle: activeStyle, lineHeight: activeLineHeight }; const commitEdit = (value: string) => { if (committedEditRef.current) return; const replacement = value.replace(/\u00a0/g, ' ').replace(/\r/g, '').trimEnd(); if (replacement !== block.text || activeFontSize !== block.fontSize || activeFamily !== supportedFamily(block.fontFamily) || activeWeight !== block.fontWeight || activeStyle !== block.fontStyle) { committedEditRef.current = true; onEdit(selection, replacement); } setEditingIndex(null); }; if (editing) return <React.Fragment key={`block-${index}`}><div ref={toolbarRef} role="toolbar" aria-label="PDF text formatting" onMouseDown={(event) => event.preventDefault()} style={{ position: 'absolute', left: block.x, top: Math.max(2, block.y - 38), display: 'flex', alignItems: 'center', gap: 4, padding: 4, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 6, boxShadow: '0 6px 18px rgba(16,24,40,.16)', zIndex: 20, whiteSpace: 'nowrap' }}><select aria-label="Font" value={activeFamily} onChange={(event) => setEditFontFamily(event.target.value)} style={{ ...toolbarInput, width: 130 }}><option value="Arial, Helvetica, sans-serif">Arial / Helvetica</option><option value="Times New Roman, serif">Times New Roman</option><option value="Courier New, monospace">Courier New</option></select><input aria-label="Font size" type="number" min={4} max={96} step={1} value={Math.round(activeFontSize)} onChange={(event) => setEditFontSize(Math.max(4, Math.min(96, Number(event.target.value) || block.fontSize)))} style={{ ...toolbarInput, width: 48 }} /><button type="button" aria-label="Bold" aria-pressed={activeWeight === '700'} onClick={() => setEditFontWeight((value) => value === '700' ? '400' : '700')} style={{ ...toolbarButton, fontWeight: 700, background: activeWeight === '700' ? '#e8f0ff' : '#fff' }}>B</button><button type="button" aria-label="Italic" aria-pressed={activeStyle === 'italic'} onClick={() => setEditFontStyle((value) => value === 'italic' ? 'normal' : 'italic')} style={{ ...toolbarButton, fontStyle: 'italic', background: activeStyle === 'italic' ? '#e8f0ff' : '#fff' }}>I</button><span style={{ fontSize: 10, color: '#667085', padding: '0 3px' }}>Enter = apply</span></div><div ref={inputRef} contentEditable suppressContentEditableWarning role="textbox" aria-label={`Edit PDF text block: ${block.text.split('\n')[0]}`} onBlur={(event) => { if (event.relatedTarget instanceof Node && toolbarRef.current?.contains(event.relatedTarget)) return; commitEdit(event.currentTarget.innerText); }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); commitEdit(event.currentTarget.innerText); } else if (event.key === 'Escape') { event.preventDefault(); committedEditRef.current = true; setEditingIndex(null); } }} style={{ position: 'absolute', left: block.x, top: block.y, width: Math.max(block.width, 60), minHeight: selection.height, padding: 0, margin: 0, border: '2px solid #2563eb', borderRadius: 2, outline: 'none', background: 'rgba(255,255,255,.98)', color: '#111827', fontFamily: activeFamily, fontSize: activeFontSize, fontWeight: activeWeight, fontStyle: activeStyle, lineHeight: `${activeLineHeight}px`, whiteSpace: 'pre-wrap', overflow: 'hidden', boxSizing: 'border-box', cursor: 'text', zIndex: 10 }}>{block.text}</div></React.Fragment>; return <span key={`block-${index}`} data-pdf-text-item="true" data-pdf-text-block="true" data-pdf-text-content={block.text} title="Click to edit this text block" style={{ position: 'absolute', left: block.x, top: block.y, width: Math.max(2, block.width), height: Math.max(2, block.height), display: 'block', color: 'transparent', background: 'transparent', border: '0', outline: 'none', boxShadow: 'none', cursor: 'text', userSelect: 'none', WebkitTapHighlightColor: 'transparent', whiteSpace: 'pre', overflow: 'hidden', boxSizing: 'border-box' }} onClick={(event) => { event.stopPropagation(); committedEditRef.current = false; setEditingIndex(index); }} />; })}
   </div>;
 }
