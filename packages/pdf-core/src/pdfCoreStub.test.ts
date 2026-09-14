@@ -1,3 +1,5 @@
+import { jest } from '@jest/globals';
+
 jest.mock('pdf-lib', () => ({ PDFDocument: { load: jest.fn(async (bytes: Uint8Array) => ({ bytes })) } }));
 import { open, renderPage } from './pdfCoreStub.js';
 
