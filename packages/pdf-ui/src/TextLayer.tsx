@@ -5,6 +5,9 @@ type TextStyle = { fontFamily?: string; ascent?: number; descent?: number; verti
 type TextItem = { str: string; transform: number[]; width: number; height?: number; fontName?: string; style?: TextStyle };
 export type TextSelection = { text: string; x: number; y: number; width: number; height: number; fontSize: number; fontName?: string; fontFamily?: string; fontWeight?: string; fontStyle?: string };
 
+const toolbarButton: React.CSSProperties = { border: '1px solid #d0d5dd', background: '#fff', color: '#101828', borderRadius: 4, minWidth: 26, height: 26, padding: '0 6px', cursor: 'pointer', fontSize: 12 };
+const toolbarInput: React.CSSProperties = { border: '1px solid #d0d5dd', borderRadius: 4, height: 26, padding: '0 5px', fontSize: 12, background: '#fff', color: '#101828' };
+
 function typography(fontName = '', pdfFamily = '') {
   const name = fontName.toLowerCase();
   const family = pdfFamily || (/times|serif/.test(name) ? 'Times New Roman, serif' : /courier|mono/.test(name) ? 'Courier New, monospace' : 'Arial, Helvetica, sans-serif');
@@ -15,9 +18,19 @@ function typography(fontName = '', pdfFamily = '') {
   };
 }
 
+function supportedFamily(family: string) {
+  if (/times|serif/i.test(family)) return 'Times New Roman, serif';
+  if (/courier|mono/i.test(family)) return 'Courier New, monospace';
+  return 'Arial, Helvetica, sans-serif';
+}
+
 export default function TextLayer({ page, viewport, enabled, onEdit }: { page: pdfjsLib.PDFPageProxy; viewport: pdfjsLib.PageViewport; enabled: boolean; onEdit: (selection: TextSelection, replacement: string) => void }) {
   const [items, setItems] = useState<TextItem[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editFontSize, setEditFontSize] = useState(0);
+  const [editFontFamily, setEditFontFamily] = useState('Arial, Helvetica, sans-serif');
+  const [editFontWeight, setEditFontWeight] = useState('400');
+  const [editFontStyle, setEditFontStyle] = useState('normal');
   const inputRef = useRef<HTMLDivElement>(null);
   const committedEditRef = useRef(false);
 
@@ -60,6 +73,15 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
 
   useEffect(() => {
     if (editingIndex === null || !inputRef.current) return;
+    const item = items[editingIndex];
+    if (!item) return;
+    const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
+    const initialFontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
+    const type = typography(item.fontName, item.style?.fontFamily);
+    setEditFontSize(initialFontSize);
+    setEditFontFamily(supportedFamily(type.family));
+    setEditFontWeight(type.fontWeight);
+    setEditFontStyle(type.fontStyle);
     committedEditRef.current = false;
     inputRef.current.focus();
     const range = document.createRange();
@@ -67,12 +89,12 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-  }, [editingIndex]);
+  }, [editingIndex, items, viewport]);
 
   if (!enabled) return <div aria-label="PDF text layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
 
   return (
-    <div aria-label="PDF text layer" data-text-item-count={items.length} style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'auto' }}>
+    <div aria-label="PDF text layer" data-text-item-count={items.length} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'auto' }}>
       {items.map((item, index) => {
         const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
         const fontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
@@ -88,75 +110,98 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
         const top = baseline - fontSize * ascent;
         const width = Math.max(2, item.width * viewport.scale);
         const height = lineHeight;
+        const editing = editingIndex === index;
+        const activeFontSize = editing && editFontSize > 0 ? editFontSize : fontSize;
+        const activeFamily = editing ? editFontFamily : type.family;
+        const activeWeight = editing ? editFontWeight : type.fontWeight;
+        const activeStyle = editing ? editFontStyle : type.fontStyle;
+        const activeHeight = Math.max(activeFontSize * 1.05, activeFontSize * (ascent - descent));
+        const activeTop = baseline - activeFontSize * ascent;
         const selection: TextSelection = {
           text: item.str,
           x: left,
-          y: top,
+          y: activeTop,
           width,
-          height,
-          fontSize,
+          height: activeHeight,
+          fontSize: activeFontSize,
           fontName: item.fontName,
-          fontFamily: type.family,
-          fontWeight: type.fontWeight,
-          fontStyle: type.fontStyle,
+          fontFamily: activeFamily,
+          fontWeight: activeWeight,
+          fontStyle: activeStyle,
         };
-        const editing = editingIndex === index;
 
         if (editing) {
           const commitEdit = (value: string) => {
             if (committedEditRef.current) return;
             const replacement = value.trim();
-            if (replacement && replacement !== item.str) {
+            if (replacement && (replacement !== item.str || activeFontSize !== fontSize || activeFamily !== type.family || activeWeight !== type.fontWeight || activeStyle !== type.fontStyle)) {
               committedEditRef.current = true;
               onEdit(selection, replacement);
             }
             setEditingIndex(null);
           };
           return (
-            <div
-              key={`${index}-${item.str}`}
-              ref={inputRef}
-              contentEditable
-              suppressContentEditableWarning
-              role="textbox"
-              aria-label={`Edit PDF text: ${item.str}`}
-              onBlur={(event) => commitEdit(event.currentTarget.textContent ?? '')}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  commitEdit(event.currentTarget.textContent ?? '');
-                } else if (event.key === 'Escape') {
-                  event.preventDefault();
-                  committedEditRef.current = true;
-                  setEditingIndex(null);
-                }
-              }}
-              style={{
-                position: 'absolute',
-                left,
-                top,
-                width: Math.max(width, 40),
-                minHeight: height,
-                height,
-                padding: 0,
-                margin: 0,
-                border: '1px solid #2563eb',
-                borderRadius: 2,
-                outline: 'none',
-                background: 'rgba(255,255,255,.96)',
-                color: '#111827',
-                fontFamily: type.family,
-                fontSize,
-                fontWeight: type.fontWeight,
-                fontStyle: type.fontStyle,
-                lineHeight: `${height}px`,
-                whiteSpace: 'pre',
-                overflow: 'visible',
-                boxSizing: 'border-box',
-                cursor: 'text',
-                zIndex: 5,
-              }}
-            >{item.str}</div>
+            <React.Fragment key={`${index}-${item.str}`}>
+              <div
+                role="toolbar"
+                aria-label="PDF text formatting"
+                onMouseDown={(event) => event.preventDefault()}
+                style={{ position: 'absolute', left, top: activeTop - 34, display: 'flex', alignItems: 'center', gap: 4, padding: 4, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 6, boxShadow: '0 6px 18px rgba(16,24,40,.16)', zIndex: 20, whiteSpace: 'nowrap' }}
+              >
+                <select aria-label="Font" value={activeFamily} onChange={(event) => setEditFontFamily(event.target.value)} style={{ ...toolbarInput, width: 130 }}>
+                  <option value="Arial, Helvetica, sans-serif">Arial / Helvetica</option>
+                  <option value="Times New Roman, serif">Times New Roman</option>
+                  <option value="Courier New, monospace">Courier New</option>
+                </select>
+                <input aria-label="Font size" type="number" min={4} max={96} step={1} value={Math.round(activeFontSize)} onChange={(event) => setEditFontSize(Math.max(4, Math.min(96, Number(event.target.value) || fontSize)))} style={{ ...toolbarInput, width: 48 }} />
+                <button type="button" aria-label="Bold" aria-pressed={activeWeight === '700'} onClick={() => setEditFontWeight((value) => value === '700' ? '400' : '700')} style={{ ...toolbarButton, fontWeight: 700, background: activeWeight === '700' ? '#e8f0ff' : '#fff' }}>B</button>
+                <button type="button" aria-label="Italic" aria-pressed={activeStyle === 'italic'} onClick={() => setEditFontStyle((value) => value === 'italic' ? 'normal' : 'italic')} style={{ ...toolbarButton, fontStyle: 'italic', background: activeStyle === 'italic' ? '#e8f0ff' : '#fff' }}>I</button>
+                <span style={{ fontSize: 10, color: '#667085', padding: '0 3px' }}>Enter = apply</span>
+              </div>
+              <div
+                ref={inputRef}
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-label={`Edit PDF text: ${item.str}`}
+                onBlur={(event) => commitEdit(event.currentTarget.textContent ?? '')}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commitEdit(event.currentTarget.textContent ?? '');
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    committedEditRef.current = true;
+                    setEditingIndex(null);
+                  }
+                }}
+                style={{
+                  position: 'absolute',
+                  left,
+                  top: activeTop,
+                  width: Math.max(width, 40),
+                  minHeight: activeHeight,
+                  height: activeHeight,
+                  padding: 0,
+                  margin: 0,
+                  border: '1px solid #2563eb',
+                  borderRadius: 2,
+                  outline: 'none',
+                  background: 'rgba(255,255,255,.96)',
+                  color: '#111827',
+                  fontFamily: activeFamily,
+                  fontSize: activeFontSize,
+                  fontWeight: activeWeight,
+                  fontStyle: activeStyle,
+                  lineHeight: `${activeHeight}px`,
+                  whiteSpace: 'pre',
+                  overflow: 'visible',
+                  boxSizing: 'border-box',
+                  cursor: 'text',
+                  zIndex: 5,
+                }}
+              >{item.str}</div>
+            </React.Fragment>
           );
         }
 
