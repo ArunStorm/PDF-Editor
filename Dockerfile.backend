@@ -1,0 +1,7 @@
+FROM node:22-alpine
+WORKDIR /app
+COPY package.json ./
+COPY backend/package.json backend/package.json
+RUN corepack enable && corepack prepare pnpm@10.15.0 --activate && pnpm install --frozen-lockfile=false
+COPY . .
+CMD ["pnpm", "--filter", "@pdf-editor/backend", "dev"]

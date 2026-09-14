@@ -1,0 +1,9 @@
+{
+  "name": "@pdf-editor/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "dev": "tsx src/server.ts", "build": "tsc --outDir dist", "typecheck": "tsc --noEmit", "lint": "tsc --noEmit" },
+  "dependencies": { "express": "^5.1.0" },
+  "devDependencies": { "@types/express": "^5.0.3", "tsx": "^4.20.3", "typescript": "^5.9.2" }
+}
