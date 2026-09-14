@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import fs from 'node:fs';
 
+test.describe.configure({ mode: 'serial' });
+
 async function resumeStructureFixture() {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([595.2756, 841.8898]);
