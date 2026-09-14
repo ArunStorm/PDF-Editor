@@ -17,6 +17,20 @@ describe('PDF save pipeline', () => {
     expect(reopened.getPage(0).getHeight()).toBe(800);
   });
 
+  it('exports a multiline replacement inside one logical text block', async () => {
+    const source = await PDFDocument.create();
+    const page = source.addPage([600, 800]);
+    const font = await source.embedFont(StandardFonts.Helvetica);
+    page.drawText('Original paragraph line one', { x: 50, y: 700, size: 12, font });
+    page.drawText('line two', { x: 50, y: 684, size: 12, font });
+    const sourceBytes = await source.save();
+    const annotation: Annotation = { id: 'replacement-multiline', type: 'replacement', page: 1, x: 50, y: 92, width: 250, height: 36, text: 'Updated paragraph\nwith a second line', originalText: 'Original paragraph line one\nline two', fontName: 'Helvetica', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 12, fontWeight: '400', fontStyle: 'normal', lineHeight: 14, viewportWidth: 600, viewportHeight: 800 };
+    const output = await save(await open(sourceBytes), { annotations: [annotation] });
+    const reopened = await PDFDocument.load(output);
+    expect(reopened.getPageCount()).toBe(1);
+    expect(output.byteLength).toBeGreaterThan(sourceBytes.byteLength);
+  });
+
   it('round-trips an unchanged PDF without annotations', async () => {
     const source = await PDFDocument.create();
     source.addPage([300, 400]);
