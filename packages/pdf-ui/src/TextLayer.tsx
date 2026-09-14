@@ -89,7 +89,7 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-  }, [editingIndex, items, viewport]);
+  }, [editingIndex, items, viewport.scale, viewport.rotation]);
 
   if (!enabled) return <div aria-label="PDF text layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
 
