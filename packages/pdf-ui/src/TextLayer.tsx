@@ -13,139 +13,26 @@ type TextBlock = { items: Array<MeasuredItem | OcrWord>; lines: Array<TextLine |
 
 const toolbarButton: React.CSSProperties = { border: '1px solid #d0d5dd', background: '#fff', color: '#101828', borderRadius: 4, minWidth: 26, height: 26, padding: '0 6px', cursor: 'pointer', fontSize: 12 };
 const toolbarInput: React.CSSProperties = { border: '1px solid #d0d5dd', borderRadius: 4, height: 26, padding: '0 5px', fontSize: 12, background: '#fff', color: '#101828' };
-
-function typography(fontName = '', pdfFamily = '') {
-  const name = `${fontName} ${pdfFamily}`.toLowerCase();
-  const family = /times|roman|serif/.test(name) && !/sans|arial|helvetica/.test(name)
-    ? 'Times New Roman, serif'
-    : /courier|mono/.test(name)
-      ? 'Courier New, monospace'
-      : 'Arial, Helvetica, sans-serif';
-  return { family, fontWeight: /bold|black|heavy/.test(name) ? '700' : '400', fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal' };
-}
-
-function supportedFamily(family: string) {
-  if (/times|roman|serif/i.test(family) && !/sans|arial|helvetica/i.test(family)) return 'Times New Roman, serif';
-  if (/courier|mono/i.test(family)) return 'Courier New, monospace';
-  return 'Arial, Helvetica, sans-serif';
-}
-
-function sameTypography(a: MeasuredItem, b: MeasuredItem) {
-  return a.family === b.family && a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && Math.abs(a.fontSize - b.fontSize) <= Math.max(1.5, a.fontSize * 0.2);
-}
-
+function typography(fontName = '', pdfFamily = '') { const name = `${fontName} ${pdfFamily}`.toLowerCase(); const family = /times|roman|serif/.test(name) && !/sans|arial|helvetica/.test(name) ? 'Times New Roman, serif' : /courier|mono/.test(name) ? 'Courier New, monospace' : 'Arial, Helvetica, sans-serif'; return { family, fontWeight: /bold|black|heavy/.test(name) ? '700' : '400', fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal' }; }
+function supportedFamily(family: string) { if (/times|roman|serif/i.test(family) && !/sans|arial|helvetica/i.test(family)) return 'Times New Roman, serif'; if (/courier|mono/i.test(family)) return 'Courier New, monospace'; return 'Arial, Helvetica, sans-serif'; }
+function sameTypography(a: MeasuredItem, b: MeasuredItem) { return a.family === b.family && a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && Math.abs(a.fontSize - b.fontSize) <= Math.max(1.5, a.fontSize * 0.2); }
 function isBullet(text: string) { return /^[\s]*(?:[•●▪◦‣⁃]|[-*]|\d+[.)])(?:\s|$)/.test(text); }
-
-function lineText(items: MeasuredItem[]) {
-  return items.reduce((result, item, index) => {
-    if (index === 0) return item.str;
-    const previous = items[index - 1];
-    const previousEndsSpace = /\s$/.test(previous.str);
-    const startsSpace = /^\s/.test(item.str);
-    const punctuation = /^[,.;:!?%)\]}]/.test(item.str);
-    const gap = item.x - previous.right;
-    const needsSpace = !previousEndsSpace && !startsSpace && !punctuation && gap > Math.max(0.8, item.fontSize * 0.08);
-    return result + (needsSpace ? ' ' : '') + item.str;
-  }, '');
-}
-
-function lineHeightFor(lines: TextLine[], fontSize: number) {
-  const deltas = lines.slice(1).map((line, index) => line.baseline - lines[index].baseline).filter((value) => value > fontSize * 0.55 && value < fontSize * 2.5);
-  const average = deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : fontSize * 1.2;
-  return Math.max(fontSize * 1.08, average);
-}
-
-function makeBlock(line: TextLine): TextBlock {
-  return { items: [...line.items], lines: [line], text: lineText(line.items), x: line.x, y: line.top, width: line.right - line.x, height: line.bottom - line.top, fontSize: line.fontSize, fontName: line.items[0].fontName, fontFamily: line.family, fontWeight: line.fontWeight, fontStyle: line.fontStyle, lineHeight: Math.max(8, line.bottom - line.top), bullet: line.firstItemBullet };
-}
+function lineText(items: MeasuredItem[]) { return items.reduce((result, item, index) => { if (index === 0) return item.str; const previous = items[index - 1]; const previousEndsSpace = /\s$/.test(previous.str); const startsSpace = /^\s/.test(item.str); const punctuation = /^[,.;:!?%)\]}]/.test(item.str); const gap = item.x - previous.right; const needsSpace = !previousEndsSpace && !startsSpace && !punctuation && gap > Math.max(0.8, item.fontSize * 0.08); return result + (needsSpace ? ' ' : '') + item.str; }, ''); }
+function lineHeightFor(lines: TextLine[], fontSize: number) { const deltas = lines.slice(1).map((line, index) => line.baseline - lines[index].baseline).filter((value) => value > fontSize * 0.55 && value < fontSize * 2.5); const average = deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : fontSize * 1.2; return Math.max(fontSize * 1.08, average); }
+function makeBlock(line: TextLine): TextBlock { return { items: [...line.items], lines: [line], text: lineText(line.items), x: line.x, y: line.top, width: line.right - line.x, height: line.bottom - line.top, fontSize: line.fontSize, fontName: line.items[0].fontName, fontFamily: line.family, fontWeight: line.fontWeight, fontStyle: line.fontStyle, lineHeight: Math.max(8, line.bottom - line.top), bullet: line.firstItemBullet }; }
 
 export function groupTextItems(items: TextItem[], viewport: pdfjsLib.PageViewport): TextBlock[] {
-  const pageWidth = viewport.width;
-  const pageScale = viewport.scale || 1;
-  const measured: MeasuredItem[] = items.map((item) => {
-    const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
-    const fontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
-    const type = typography(item.fontName, item.style?.fontFamily);
-    const ascent = Math.max(0.55, item.style?.ascent ?? 0.9);
-    const descent = Math.min(-0.05, item.style?.descent ?? -0.2);
-    const axisScale = Math.max(0.001, Math.hypot(transform[0], transform[1]));
-    const advanceX = item.width * pageScale * (transform[0] / axisScale);
-    const x1 = transform[4];
-    const x2 = x1 + advanceX;
-    return { ...item, x: Math.min(x1, x2), right: Math.max(x1, x2), baseline: transform[5], fontSize, top: transform[5] - fontSize * ascent, bottom: transform[5] + Math.abs(fontSize * descent), family: type.family, fontWeight: type.fontWeight, fontStyle: type.fontStyle, height: Math.max(fontSize * 1.05, fontSize * (ascent - descent)) };
-  }).sort((a, b) => a.baseline - b.baseline || a.x - b.x);
-
+  const pageWidth = viewport.width; const pageScale = viewport.scale || 1;
+  const measured: MeasuredItem[] = items.map((item) => { const transform = pdfjsLib.Util.transform(viewport.transform, item.transform); const fontSize = Math.max(5, Math.hypot(transform[2], transform[3])); const type = typography(item.fontName, item.style?.fontFamily); const ascent = Math.max(0.55, item.style?.ascent ?? 0.9); const descent = Math.min(-0.05, item.style?.descent ?? -0.2); const axisScale = Math.max(0.001, Math.hypot(transform[0], transform[1])); const advanceX = item.width * pageScale * (transform[0] / axisScale); const x1 = transform[4]; const x2 = x1 + advanceX; return { ...item, x: Math.min(x1, x2), right: Math.max(x1, x2), baseline: transform[5], fontSize, top: transform[5] - fontSize * ascent, bottom: transform[5] + Math.abs(fontSize * descent), family: type.family, fontWeight: type.fontWeight, fontStyle: type.fontStyle, height: Math.max(fontSize * 1.05, fontSize * (ascent - descent)) }; }).sort((a, b) => a.baseline - b.baseline || a.x - b.x);
   const lines: TextLine[] = [];
-  for (const item of measured) {
-    const tolerance = Math.max(2.5, item.fontSize * 0.5);
-    const candidates = lines.filter((line) => {
-      if (Math.abs(line.baseline - item.baseline) > tolerance) return false;
-      if (!sameTypography(line.items[0], item)) return false;
-      if (item.x < line.x - Math.max(4, item.fontSize * 0.5)) return false;
-      const gap = item.x - line.right;
-      const rightColumn = item.x > pageWidth * 0.52 && line.right < item.x && gap > pageWidth * 0.14;
-      return gap <= Math.max(100, item.fontSize * 8) && !rightColumn;
-    });
-    const line = candidates.sort((a, b) => Math.abs(a.baseline - item.baseline) - Math.abs(b.baseline - item.baseline)).at(0);
-    if (!line || line.items[line.items.length - 1].hasEOL) {
-      const bullet = isBullet(item.str);
-      lines.push({ items: [item], x: item.x, right: item.right, baseline: item.baseline, top: item.top, bottom: item.bottom, fontSize: item.fontSize, family: item.family, fontWeight: item.fontWeight, fontStyle: item.fontStyle, bullet, firstItemBullet: bullet });
-      continue;
-    }
-    line.items.push(item); line.right = Math.max(line.right, item.right); line.top = Math.min(line.top, item.top); line.bottom = Math.max(line.bottom, item.bottom);
-  }
-
+  for (const item of measured) { const tolerance = Math.max(2.5, item.fontSize * 0.5); const candidates = lines.filter((line) => { if (Math.abs(line.baseline - item.baseline) > tolerance) return false; if (!sameTypography(line.items[0], item)) return false; if (item.x < line.x - Math.max(4, item.fontSize * 0.5)) return false; const gap = item.x - line.right; const rightColumn = item.x > pageWidth * 0.52 && line.right < item.x && gap > pageWidth * 0.14; return gap <= Math.max(100, item.fontSize * 8) && !rightColumn; }); const line = candidates.sort((a, b) => Math.abs(a.baseline - item.baseline) - Math.abs(b.baseline - item.baseline)).at(0); if (!line || line.items[line.items.length - 1].hasEOL) { const bullet = isBullet(item.str); lines.push({ items: [item], x: item.x, right: item.right, baseline: item.baseline, top: item.top, bottom: item.bottom, fontSize: item.fontSize, family: item.family, fontWeight: item.fontWeight, fontStyle: item.fontStyle, bullet, firstItemBullet: bullet }); continue; } line.items.push(item); line.right = Math.max(line.right, item.right); line.top = Math.min(line.top, item.top); line.bottom = Math.max(line.bottom, item.bottom); }
   lines.sort((a, b) => a.baseline - b.baseline || a.x - b.x);
   const blocks: TextBlock[] = [];
-  for (const line of lines) {
-    let best: { block: TextBlock; score: number } | null = null;
-    if (!line.bullet) {
-      for (const block of blocks) {
-        const previousLine = block.lines[block.lines.length - 1] as TextLine;
-        if (!previousLine || line.baseline <= previousLine.baseline || !sameTypography(previousLine.items[0], line.items[0])) continue;
-        const verticalGap = line.top - previousLine.bottom;
-        const glyphHeight = Math.max(previousLine.bottom - previousLine.top, line.bottom - line.top);
-        const expectedLineGap = Math.max(previousLine.fontSize * 1.15, block.lineHeight);
-        const maxVerticalGap = Math.max(10, expectedLineGap * 0.75);
-        const startDelta = Math.abs(line.x - previousLine.x);
-        const horizontalOverlap = line.x < previousLine.right && previousLine.x < line.right;
-        const compatibleIndent = startDelta <= Math.max(28, line.fontSize * 2.8);
-        const sameColumn = Math.abs(line.x - previousLine.x) <= Math.max(80, line.fontSize * 6) || horizontalOverlap;
-        const continuationOfBullet = block.bullet && line.x >= previousLine.x - 2;
-        const likelyNewParagraph = verticalGap > maxVerticalGap || (verticalGap > glyphHeight * 0.95 && !compatibleIndent);
-        if (verticalGap < -line.fontSize * 0.45 || likelyNewParagraph || !sameColumn || (!horizontalOverlap && !compatibleIndent && !continuationOfBullet)) continue;
-        const score = Math.max(0, verticalGap) * 5 + startDelta;
-        if (!best || score < best.score) best = { block, score };
-      }
-    }
-    if (!best) { blocks.push(makeBlock(line)); continue; }
-    const block = best.block;
-    block.lines.push(line); block.items.push(...line.items); block.text += `\n${lineText(line.items)`}`; block.x = Math.min(block.x, line.x); block.y = Math.min(block.y, line.top); block.width = Math.max(block.width, line.right - block.x); block.height = Math.max(block.height, line.bottom - block.y); block.lineHeight = lineHeightFor(block.lines as TextLine[], block.fontSize);
-  }
+  for (const line of lines) { let best: { block: TextBlock; score: number } | null = null; if (!line.bullet) { for (const block of blocks) { const previousLine = block.lines[block.lines.length - 1] as TextLine; if (!previousLine || line.baseline <= previousLine.baseline || !sameTypography(previousLine.items[0], line.items[0])) continue; const verticalGap = line.top - previousLine.bottom; const glyphHeight = Math.max(previousLine.bottom - previousLine.top, line.bottom - line.top); const expectedLineGap = Math.max(previousLine.fontSize * 1.15, block.lineHeight); const maxVerticalGap = Math.max(10, expectedLineGap * 0.75); const startDelta = Math.abs(line.x - previousLine.x); const horizontalOverlap = line.x < previousLine.right && previousLine.x < line.right; const compatibleIndent = startDelta <= Math.max(28, line.fontSize * 2.8); const sameColumn = Math.abs(line.x - previousLine.x) <= Math.max(80, line.fontSize * 6) || horizontalOverlap; const continuationOfBullet = block.bullet && line.x >= previousLine.x - 2; const likelyNewParagraph = verticalGap > maxVerticalGap || (verticalGap > glyphHeight * 0.95 && !compatibleIndent); if (verticalGap < -line.fontSize * 0.45 || likelyNewParagraph || !sameColumn || (!horizontalOverlap && !compatibleIndent && !continuationOfBullet)) continue; const score = Math.max(0, verticalGap) * 5 + startDelta; if (!best || score < best.score) best = { block, score }; } } if (!best) { blocks.push(makeBlock(line)); continue; } const block = best.block; block.lines.push(line); block.items.push(...line.items); block.text += `\n${lineText(line.items)}`; block.x = Math.min(block.x, line.x); block.y = Math.min(block.y, line.top); block.width = Math.max(block.width, line.right - block.x); block.height = Math.max(block.height, line.bottom - block.y); block.lineHeight = lineHeightFor(block.lines as TextLine[], block.fontSize); }
   return blocks;
 }
 
-function groupOcrWords(words: OcrWord[]): TextBlock[] {
-  const sorted = words.filter((word) => word.text.trim() && (word.confidence === undefined || word.confidence >= 20)).sort((a, b) => a.y - b.y || a.x - b.x);
-  const lines: OcrLine[] = [];
-  for (const word of sorted) {
-    const center = word.y + word.height / 2;
-    const candidate = lines.find((line) => Math.abs((line.y + line.bottom) / 2 - center) <= Math.max(4, word.height * 0.55) && word.x >= line.x - Math.max(4, word.height * 0.25) && word.x - line.right <= Math.max(24, word.height * 2.5));
-    if (!candidate) { lines.push({ words: [word], x: word.x, right: word.x + word.width, y: word.y, bottom: word.y + word.height, fontSize: Math.max(5, word.height * 0.8), bullet: isBullet(word.text) }); continue; }
-    candidate.words.push(word); candidate.right = Math.max(candidate.right, word.x + word.width); candidate.x = Math.min(candidate.x, word.x); candidate.y = Math.min(candidate.y, word.y); candidate.bottom = Math.max(candidate.bottom, word.y + word.height); candidate.fontSize = Math.max(candidate.fontSize, word.height * 0.8); candidate.bullet ||= isBullet(word.text);
-  }
-  lines.sort((a, b) => a.y - b.y || a.x - b.x);
-  const blocks: TextBlock[] = [];
-  const textOf = (line: OcrLine) => line.words.map((word) => word.text.trim()).filter(Boolean).join(' ');
-  for (const line of lines) {
-    const previous = blocks[blocks.length - 1]; const previousLine = previous?.lines[previous.lines.length - 1] as OcrLine | undefined;
-    if (!previous || !previousLine || line.bullet) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; }
-    const gap = line.y - previousLine.bottom; const startDelta = Math.abs(line.x - previousLine.x);
-    if (gap < -line.fontSize * 0.45 || gap > Math.max(10, line.fontSize * 1.5) || startDelta > Math.max(28, line.fontSize * 2.8)) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; }
-    previous.lines.push(line); previous.items.push(...line.words); previous.text += `\n${textOf(line)}`; previous.x = Math.min(previous.x, line.x); previous.y = Math.min(previous.y, line.y); previous.width = Math.max(previous.width, line.right - previous.x); previous.height = Math.max(previous.height, line.bottom - previous.y); previous.lineHeight = Math.max(previous.lineHeight, line.y - previousLine.y);
-  }
-  return blocks;
-}
+function groupOcrWords(words: OcrWord[]): TextBlock[] { const sorted = words.filter((word) => word.text.trim() && (word.confidence === undefined || word.confidence >= 20)).sort((a, b) => a.y - b.y || a.x - b.x); const lines: OcrLine[] = []; for (const word of sorted) { const center = word.y + word.height / 2; const candidate = lines.find((line) => Math.abs((line.y + line.bottom) / 2 - center) <= Math.max(4, word.height * 0.55) && word.x >= line.x - Math.max(4, word.height * 0.25) && word.x - line.right <= Math.max(24, word.height * 2.5)); if (!candidate) { lines.push({ words: [word], x: word.x, right: word.x + word.width, y: word.y, bottom: word.y + word.height, fontSize: Math.max(5, word.height * 0.8), bullet: isBullet(word.text) }); continue; } candidate.words.push(word); candidate.right = Math.max(candidate.right, word.x + word.width); candidate.x = Math.min(candidate.x, word.x); candidate.y = Math.min(candidate.y, word.y); candidate.bottom = Math.max(candidate.bottom, word.y + word.height); candidate.fontSize = Math.max(candidate.fontSize, word.height * 0.8); candidate.bullet ||= isBullet(word.text); } lines.sort((a, b) => a.y - b.y || a.x - b.x); const blocks: TextBlock[] = []; const textOf = (line: OcrLine) => line.words.map((word) => word.text.trim()).filter(Boolean).join(' '); for (const line of lines) { const previous = blocks[blocks.length - 1]; const previousLine = previous?.lines[previous.lines.length - 1] as OcrLine | undefined; if (!previous || !previousLine || line.bullet) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; } const gap = line.y - previousLine.bottom; const startDelta = Math.abs(line.x - previousLine.x); if (gap < -line.fontSize * 0.45 || gap > Math.max(10, line.fontSize * 1.5) || startDelta > Math.max(28, line.fontSize * 2.8)) { blocks.push({ items: [...line.words], lines: [line], text: textOf(line), x: line.x, y: line.y, width: line.right - line.x, height: line.bottom - line.y, fontSize: line.fontSize, fontFamily: 'Arial, Helvetica, sans-serif', fontWeight: '400', fontStyle: 'normal', lineHeight: Math.max(8, line.bottom - line.y), bullet: line.bullet }); continue; } previous.lines.push(line); previous.items.push(...line.words); previous.text += `\n${textOf(line)}`; previous.x = Math.min(previous.x, line.x); previous.y = Math.min(previous.y, line.y); previous.width = Math.max(previous.width, line.right - previous.x); previous.height = Math.max(previous.height, line.bottom - previous.y); previous.lineHeight = Math.max(previous.lineHeight, line.y - previousLine.y); } return blocks; }
 
 export default function TextLayer({ page, viewport, enabled, onEdit }: { page: pdfjsLib.PDFPageProxy; viewport: pdfjsLib.PageViewport; enabled: boolean; onEdit: (selection: TextSelection, replacement: string) => void }) {
   const rootRef = useRef<HTMLDivElement>(null); const [items, setItems] = useState<TextItem[]>([]); const [ocrWords, setOcrWords] = useState<OcrWord[]>([]); const [source, setSource] = useState<'pdf' | 'ocr'>('pdf'); const [editingIndex, setEditingIndex] = useState<number | null>(null); const [editFontSize, setEditFontSize] = useState(0); const [editFontFamily, setEditFontFamily] = useState('Arial, Helvetica, sans-serif'); const [editFontWeight, setEditFontWeight] = useState('400'); const [editFontStyle, setEditFontStyle] = useState('normal'); const inputRef = useRef<HTMLDivElement>(null); const toolbarRef = useRef<HTMLDivElement>(null); const committedEditRef = useRef(false); const blocks = useMemo(() => source === 'ocr' ? groupOcrWords(ocrWords) : groupTextItems(items, viewport), [items, ocrWords, source, viewport]);
