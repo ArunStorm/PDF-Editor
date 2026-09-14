@@ -22,14 +22,13 @@ export type Annotation = {
   fontSize?: number;
   fontWeight?: string;
   fontStyle?: string;
+  lineHeight?: number;
 };
 
 export type SaveOptions = { annotations?: Annotation[] };
 
 export async function open(input: PdfInput): Promise<PdfHandle> {
-  if (typeof input === 'string') {
-    throw new Error('Path input is intentionally delegated to the host adapter.');
-  }
+  if (typeof input === 'string') throw new Error('Path input is intentionally delegated to the host adapter.');
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   return { bytes, document: await PDFDocument.load(bytes, { updateMetadata: false }) };
 }
@@ -48,7 +47,6 @@ function chooseStandardFont(annotation: Annotation) {
   const name = `${annotation.fontName ?? ''} ${annotation.fontFamily ?? ''}`.toLowerCase();
   const bold = annotation.fontWeight === 'bold' || annotation.fontWeight === '700' || /bold|black|heavy/.test(name);
   const italic = annotation.fontStyle === 'italic' || /italic|oblique/.test(name);
-
   if (/courier|mono/.test(name)) {
     if (bold && italic) return StandardFonts.CourierBoldOblique;
     if (bold) return StandardFonts.CourierBold;
@@ -73,7 +71,6 @@ export async function save(handle: PdfHandle, options: SaveOptions = {}): Promis
   const annotations = options.annotations ?? [];
   const defaultFont = await document.embedFont(StandardFonts.Helvetica);
   const fontCache = new Map<string, Awaited<ReturnType<PDFDocument['embedFont']>>>();
-
   const getFont = async (annotation: Annotation) => {
     const standard = chooseStandardFont(annotation);
     if (!fontCache.has(standard)) fontCache.set(standard, await document.embedFont(standard));
@@ -83,7 +80,6 @@ export async function save(handle: PdfHandle, options: SaveOptions = {}): Promis
   for (const annotation of annotations) {
     const page = document.getPage(annotation.page - 1);
     if (!page) continue;
-
     const size = page.getSize();
     const viewportWidth = annotation.viewportWidth || size.width;
     const viewportHeight = annotation.viewportHeight || size.height;
@@ -95,59 +91,35 @@ export async function save(handle: PdfHandle, options: SaveOptions = {}): Promis
     const y = size.height - (annotation.y + (annotation.height ?? 60)) * sy;
 
     if (annotation.type === 'rect') {
-      page.drawRectangle({
-        x, y, width, height,
-        borderWidth: 1.2,
-        borderColor: rgb(0.85, 0.55, 0),
-        color: rgb(1, 0.85, 0.15),
-        opacity: 0.28,
-        borderOpacity: 0.9,
-      });
+      page.drawRectangle({ x, y, width, height, borderWidth: 1.2, borderColor: rgb(0.85, 0.55, 0), color: rgb(1, 0.85, 0.15), opacity: 0.28, borderOpacity: 0.9 });
     }
 
     if (annotation.type === 'text' && annotation.text) {
-      page.drawText(annotation.text, {
-        x: x + 6 * sx,
-        y: y + Math.max(8, height - 20 * sy),
-        size: Math.max(10, 14 * sx),
-        font: defaultFont,
-        color: rgb(0.08, 0.08, 0.12),
-        maxWidth: Math.max(40, width - 12 * sx),
-      });
+      page.drawText(annotation.text, { x: x + 6 * sx, y: y + Math.max(8, height - 20 * sy), size: Math.max(10, 14 * sx), font: defaultFont, color: rgb(0.08, 0.08, 0.12), maxWidth: Math.max(40, width - 12 * sx) });
     }
 
-    if (annotation.type === 'replacement' && annotation.text) {
-      // The browser editor uses the PDF.js ascent/descent metrics to create a
-      // box whose top/bottom match the original glyph box. Keep that box when
-      // exporting so the replacement lands on the same baseline.
+    if (annotation.type === 'replacement') {
       page.drawRectangle({ x, y, width, height, color: rgb(1, 1, 1), opacity: 1, borderWidth: 0 });
-      const font = await getFont(annotation);
-      const requestedSize = Math.max(6, (annotation.fontSize ?? 14) * sx);
-      const naturalWidth = font.widthOfTextAtSize(annotation.text, requestedSize);
-      // If the replacement is longer than the original text box, reduce the
-      // font size just enough to avoid colliding with adjacent PDF content.
-      const fitRatio = naturalWidth > width && width > 0 ? width / naturalWidth : 1;
-      const fontSize = Math.max(6, requestedSize * fitRatio);
-      const fontHeight = font.heightAtSize(fontSize);
-      const baseline = y + Math.max(0, height - fontHeight);
-      page.drawText(annotation.text, {
-        x,
-        y: baseline,
-        size: fontSize,
-        font,
-        color: rgb(0.05, 0.05, 0.05),
-        maxWidth: Math.max(4, width),
-      });
+      if (annotation.text) {
+        const font = await getFont(annotation);
+        const requestedSize = Math.max(6, (annotation.fontSize ?? 14) * sx);
+        const lines = annotation.text.replace(/\r/g, '').split('\n');
+        const naturalWidth = Math.max(...lines.map((line) => font.widthOfTextAtSize(line, requestedSize)), 0);
+        const fitRatio = naturalWidth > width && width > 0 ? width / naturalWidth : 1;
+        const fontSize = Math.max(6, requestedSize * fitRatio);
+        const glyphHeight = font.heightAtSize(fontSize);
+        const lineHeight = Math.max(fontSize * 1.05, (annotation.lineHeight ?? fontSize * 1.2) * sy);
+        const totalTextHeight = glyphHeight + Math.max(0, lines.length - 1) * lineHeight;
+        const firstBaseline = y + Math.max(glyphHeight, height - totalTextHeight + glyphHeight);
+        lines.forEach((line, index) => page.drawText(line, { x, y: firstBaseline - index * lineHeight, size: fontSize, font, color: rgb(0.05, 0.05, 0.05), maxWidth: Math.max(4, width) }));
+      }
     }
 
     if (annotation.type === 'image' && annotation.imageData) {
-      const image = annotation.imageData.startsWith('data:image/png')
-        ? await document.embedPng(annotation.imageData)
-        : await document.embedJpg(annotation.imageData);
+      const image = annotation.imageData.startsWith('data:image/png') ? await document.embedPng(annotation.imageData) : await document.embedJpg(annotation.imageData);
       page.drawImage(image, { x, y, width, height });
     }
   }
-
   return document.save({ useObjectStreams: true });
 }
 
