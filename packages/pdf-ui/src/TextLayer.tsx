@@ -1,13 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
-type TextItem = { str: string; transform: number[]; width: number; height?: number; fontName?: string; style?: { fontFamily?: string } };
+type TextStyle = { fontFamily?: string; ascent?: number; descent?: number; vertical?: boolean };
+type TextItem = { str: string; transform: number[]; width: number; height?: number; fontName?: string; style?: TextStyle };
 export type TextSelection = { text: string; x: number; y: number; width: number; height: number; fontSize: number; fontName?: string; fontFamily?: string; fontWeight?: string; fontStyle?: string };
 
 function typography(fontName = '', pdfFamily = '') {
   const name = fontName.toLowerCase();
   const family = pdfFamily || (/times|serif/.test(name) ? 'Times New Roman, serif' : /courier|mono/.test(name) ? 'Courier New, monospace' : 'Arial, Helvetica, sans-serif');
-  return { family, fontWeight: /bold|black|heavy/.test(name) ? '700' : '400', fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal' };
+  return {
+    family,
+    fontWeight: /bold|black|heavy/.test(name) ? '700' : '400',
+    fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal',
+  };
 }
 
 export default function TextLayer({ page, viewport, enabled, onEdit }: { page: pdfjsLib.PDFPageProxy; viewport: pdfjsLib.PageViewport; enabled: boolean; onEdit: (selection: TextSelection, replacement: string) => void }) {
@@ -21,8 +26,6 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
     setEditingIndex(null);
     setItems([]);
 
-    // streamTextContent is the PDF.js display-layer primitive and is more reliable
-    // for incremental/large documents than waiting for one complete text payload.
     const loadText = async () => {
       for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
         try {
@@ -38,7 +41,6 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
             .map((item: any) => ({ ...item })) as TextItem[];
 
           if (!cancelled && textItems.length > 0) {
-            // Fetch styles separately so the inline editor can approximate the PDF typography.
             const content = await page.getTextContent({ includeMarkedContent: false });
             const styles = content.styles ?? {};
             setItems(textItems.map((item) => ({ ...item, style: styles[item.fontName ?? ''] })));
@@ -74,12 +76,30 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
       {items.map((item, index) => {
         const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
         const fontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
-        const left = transform[4];
-        const top = transform[5] - fontSize;
-        const width = Math.max(2, item.width * viewport.scale);
-        const height = Math.max(fontSize * 1.15, item.height ?? fontSize);
+        const baseline = transform[5];
         const type = typography(item.fontName, item.style?.fontFamily);
-        const selection: TextSelection = { text: item.str, x: left, y: top, width, height, fontSize, fontName: item.fontName, fontFamily: type.family, fontWeight: type.fontWeight, fontStyle: type.fontStyle };
+        // PDF.js exposes ascent/descent for the actual PDF font. Using those metrics
+        // instead of baseline - fontSize removes the vertical drift visible with
+        // Arial/Helvetica substitutions and keeps the edit box on the original baseline.
+        const ascent = Math.max(0.55, item.style?.ascent ?? 0.9);
+        const descent = Math.min(-0.05, item.style?.descent ?? -0.2);
+        const lineHeight = Math.max(fontSize * 1.05, fontSize * (ascent - descent));
+        const left = transform[4];
+        const top = baseline - fontSize * ascent;
+        const width = Math.max(2, item.width * viewport.scale);
+        const height = lineHeight;
+        const selection: TextSelection = {
+          text: item.str,
+          x: left,
+          y: top,
+          width,
+          height,
+          fontSize,
+          fontName: item.fontName,
+          fontFamily: type.family,
+          fontWeight: type.fontWeight,
+          fontStyle: type.fontStyle,
+        };
         const editing = editingIndex === index;
 
         if (editing) {
@@ -93,21 +113,78 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
             setEditingIndex(null);
           };
           return (
-            <div key={`${index}-${item.str}`} ref={inputRef} contentEditable suppressContentEditableWarning role="textbox" aria-label={`Edit PDF text: ${item.str}`}
+            <div
+              key={`${index}-${item.str}`}
+              ref={inputRef}
+              contentEditable
+              suppressContentEditableWarning
+              role="textbox"
+              aria-label={`Edit PDF text: ${item.str}`}
               onBlur={(event) => commitEdit(event.currentTarget.textContent ?? '')}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') { event.preventDefault(); commitEdit(event.currentTarget.textContent ?? ''); }
-                else if (event.key === 'Escape') { event.preventDefault(); committedEditRef.current = true; setEditingIndex(null); }
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  commitEdit(event.currentTarget.textContent ?? '');
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  committedEditRef.current = true;
+                  setEditingIndex(null);
+                }
               }}
-              style={{ position: 'absolute', left, top, width: Math.max(width, 40), minHeight: height, padding: 0, margin: 0, border: '2px solid #2563eb', outline: 'none', background: '#fff', color: '#111827', fontFamily: type.family, fontSize, fontWeight: type.fontWeight, fontStyle: type.fontStyle, lineHeight: `${height}px`, whiteSpace: 'pre', overflow: 'hidden', boxSizing: 'border-box', cursor: 'text' }}
+              style={{
+                position: 'absolute',
+                left,
+                top,
+                width: Math.max(width, 40),
+                minHeight: height,
+                height,
+                padding: 0,
+                margin: 0,
+                border: '1px solid #2563eb',
+                borderRadius: 2,
+                outline: 'none',
+                background: 'rgba(255,255,255,.96)',
+                color: '#111827',
+                fontFamily: type.family,
+                fontSize,
+                fontWeight: type.fontWeight,
+                fontStyle: type.fontStyle,
+                lineHeight: `${height}px`,
+                whiteSpace: 'pre',
+                overflow: 'visible',
+                boxSizing: 'border-box',
+                cursor: 'text',
+                zIndex: 5,
+              }}
             >{item.str}</div>
           );
         }
 
         return (
-          <span key={`${index}-${item.str}`} data-pdf-text-item="true" title="Click to edit this PDF text"
-            onClick={(event) => { event.stopPropagation(); committedEditRef.current = false; setEditingIndex(index); }}
-            style={{ position: 'absolute', left, top, width, height, color: 'transparent', background: 'rgba(37,99,235,.035)', border: '1px solid rgba(37,99,235,.10)', cursor: 'text', userSelect: 'none', whiteSpace: 'pre', overflow: 'hidden', boxSizing: 'border-box' }}
+          <span
+            key={`${index}-${item.str}`}
+            data-pdf-text-item="true"
+            title="Click to edit this PDF text"
+            onClick={(event) => {
+              event.stopPropagation();
+              committedEditRef.current = false;
+              setEditingIndex(index);
+            }}
+            style={{
+              position: 'absolute',
+              left,
+              top,
+              width,
+              height,
+              color: 'transparent',
+              background: 'rgba(37,99,235,.035)',
+              border: '1px solid rgba(37,99,235,.10)',
+              cursor: 'text',
+              userSelect: 'none',
+              whiteSpace: 'pre',
+              overflow: 'hidden',
+              boxSizing: 'border-box',
+            }}
           >{item.str}</span>
         );
       })}
