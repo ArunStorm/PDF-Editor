@@ -4,7 +4,7 @@ module.exports = {
   roots: ['<rootDir>/src'],
   extensionsToTreatAsEsm: ['.ts'],
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', { useESM: true, isolatedModules: true }],
+    '^.+\\.tsx?$': ['ts-jest', { useESM: true }],
   },
   moduleNameMapper: {
     '^@pdf-editor/(.*)$': '<rootDir>/../$1/src',
