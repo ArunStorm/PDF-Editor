@@ -1,11 +1,13 @@
-import { jest } from '@jest/globals';
-
-jest.mock('pdf-lib', () => ({ PDFDocument: { load: jest.fn(async (bytes: Uint8Array) => ({ bytes })) } }));
+import { PDFDocument } from 'pdf-lib';
 import { open, renderPage } from './pdfCoreStub.js';
 
-test('open accepts PDF bytes', async () => {
-  const handle = await open(new Uint8Array([37, 80, 68, 70]));
-  expect(handle.bytes).toHaveLength(4);
+test('open accepts valid PDF bytes', async () => {
+  const document = await PDFDocument.create();
+  document.addPage([300, 400]);
+  const bytes = await document.save();
+  const handle = await open(bytes);
+  expect(handle.bytes).toHaveLength(bytes.length);
+  expect(handle.document?.getPageCount()).toBe(1);
 });
 
 test('renderPage validates page and scale', async () => {
