@@ -38,10 +38,7 @@ export async function renderPage(handle: PdfHandle, page: number, scale = 1): Pr
   return { page, scale, bytes: handle.bytes };
 }
 
-export function annotate(handle: PdfHandle, annotation: Annotation): PdfHandle {
-  void annotation;
-  return handle;
-}
+export function annotate(handle: PdfHandle, annotation: Annotation): PdfHandle { void annotation; return handle; }
 
 function chooseStandardFont(annotation: Annotation) {
   const name = `${annotation.fontName ?? ''} ${annotation.fontFamily ?? ''}`.toLowerCase();
@@ -53,7 +50,7 @@ function chooseStandardFont(annotation: Annotation) {
     if (italic) return StandardFonts.CourierOblique;
     return StandardFonts.Courier;
   }
-  if (/times|serif/.test(name)) {
+  if (/times|roman|serif/.test(name) && !/sans|arial|helvetica/.test(name)) {
     if (bold && italic) return StandardFonts.TimesRomanBoldItalic;
     if (bold) return StandardFonts.TimesRomanBold;
     if (italic) return StandardFonts.TimesRomanItalic;
@@ -85,45 +82,55 @@ export async function save(handle: PdfHandle, options: SaveOptions = {}): Promis
     const viewportHeight = annotation.viewportHeight || size.height;
     const sx = size.width / viewportWidth;
     const sy = size.height / viewportHeight;
-    const width = (annotation.width ?? 160) * sx;
-    const height = (annotation.height ?? 60) * sy;
+    const sourceWidth = Math.max(4, (annotation.width ?? 160) * sx);
+    const sourceHeight = Math.max(4, (annotation.height ?? 60) * sy);
     const x = annotation.x * sx;
     const y = size.height - (annotation.y + (annotation.height ?? 60)) * sy;
 
     if (annotation.type === 'rect') {
-      page.drawRectangle({ x, y, width, height, borderWidth: 1.2, borderColor: rgb(0.85, 0.55, 0), color: rgb(1, 0.85, 0.15), opacity: 0.28, borderOpacity: 0.9 });
+      page.drawRectangle({ x, y, width: sourceWidth, height: sourceHeight, borderWidth: 1.2, borderColor: rgb(0.85, 0.55, 0), color: rgb(1, 0.85, 0.15), opacity: 0.28, borderOpacity: 0.9 });
     }
 
     if (annotation.type === 'text' && annotation.text) {
-      page.drawText(annotation.text, { x: x + 6 * sx, y: y + Math.max(8, height - 20 * sy), size: Math.max(10, 14 * sx), font: defaultFont, color: rgb(0.08, 0.08, 0.12), maxWidth: Math.max(40, width - 12 * sx) });
+      page.drawText(annotation.text, { x: x + 6 * sx, y: y + Math.max(8, sourceHeight - 20 * sy), size: Math.max(10, 14 * sx), font: defaultFont, color: rgb(0.08, 0.08, 0.12), maxWidth: Math.max(40, sourceWidth - 12 * sx) });
     }
 
     if (annotation.type === 'replacement') {
-      page.drawRectangle({ x, y, width, height, color: rgb(1, 1, 1), opacity: 1, borderWidth: 0 });
+      // Cover the original glyphs first. A small expansion prevents anti-aliased source pixels
+      // from leaking around the replacement without materially covering neighbouring content.
+      const coverPad = Math.min(1.2, Math.min(sourceWidth, sourceHeight) * 0.08);
+      const coverX = Math.max(0, x - coverPad);
+      const coverY = Math.max(0, y - coverPad);
+      const coverWidth = Math.min(size.width - coverX, sourceWidth + coverPad * 2);
+      const coverHeight = Math.min(size.height - coverY, sourceHeight + coverPad * 2);
+      page.drawRectangle({ x: coverX, y: coverY, width: coverWidth, height: coverHeight, color: rgb(1, 1, 1), opacity: 1, borderWidth: 0 });
+
       if (annotation.text) {
         const font = await getFont(annotation);
         const requestedSize = Math.max(6, (annotation.fontSize ?? 14) * sx);
         const lines = annotation.text.replace(/\r/g, '').split('\n');
+        const requestedLineHeight = Math.max(requestedSize * 1.08, (annotation.lineHeight ?? requestedSize * 1.2) * sy);
         const naturalWidth = Math.max(...lines.map((line) => font.widthOfTextAtSize(line, requestedSize)), 0);
-        const fitRatio = naturalWidth > width && width > 0 ? width / naturalWidth : 1;
+        const widthRatio = naturalWidth > sourceWidth && sourceWidth > 0 ? sourceWidth / naturalWidth : 1;
+        const requestedGlyphHeight = font.heightAtSize(requestedSize);
+        const naturalHeight = requestedGlyphHeight + Math.max(0, lines.length - 1) * requestedLineHeight;
+        const heightRatio = naturalHeight > sourceHeight && sourceHeight > 0 ? sourceHeight / naturalHeight : 1;
+        const fitRatio = Math.min(1, widthRatio, heightRatio);
         const fontSize = Math.max(6, requestedSize * fitRatio);
+        const lineHeight = Math.max(fontSize * 1.08, requestedLineHeight * fitRatio);
         const glyphHeight = font.heightAtSize(fontSize);
-        const lineHeight = Math.max(fontSize * 1.05, (annotation.lineHeight ?? fontSize * 1.2) * sy);
         const totalTextHeight = glyphHeight + Math.max(0, lines.length - 1) * lineHeight;
-        const firstBaseline = y + Math.max(glyphHeight, height - totalTextHeight + glyphHeight);
-        lines.forEach((line, index) => page.drawText(line, { x, y: firstBaseline - index * lineHeight, size: fontSize, font, color: rgb(0.05, 0.05, 0.05), maxWidth: Math.max(4, width) }));
+        const firstBaseline = y + Math.min(sourceHeight - glyphHeight * 0.15, Math.max(glyphHeight, sourceHeight - totalTextHeight + glyphHeight));
+        lines.forEach((line, index) => page.drawText(line, { x, y: firstBaseline - index * lineHeight, size: fontSize, font, color: rgb(0.05, 0.05, 0.05), maxWidth: Math.max(4, sourceWidth) }));
       }
     }
 
     if (annotation.type === 'image' && annotation.imageData) {
       const image = annotation.imageData.startsWith('data:image/png') ? await document.embedPng(annotation.imageData) : await document.embedJpg(annotation.imageData);
-      page.drawImage(image, { x, y, width, height });
+      page.drawImage(image, { x, y, width: sourceWidth, height: sourceHeight });
     }
   }
   return document.save({ useObjectStreams: true });
 }
 
-export async function ocrPage(handle: PdfHandle, page: number): Promise<string> {
-  void handle;
-  return `OCR placeholder for page ${page}`;
-}
+export async function ocrPage(handle: PdfHandle, page: number): Promise<string> { void handle; return `OCR placeholder for page ${page}`; }
