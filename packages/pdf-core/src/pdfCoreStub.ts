@@ -117,19 +117,26 @@ export async function save(handle: PdfHandle, options: SaveOptions = {}): Promis
     }
 
     if (annotation.type === 'replacement' && annotation.text) {
-      // Cover only the original text box, then redraw using the closest standard
-      // font family/weight/style reported by PDF.js. This keeps the replacement
-      // on the same line and visually close to the source formatting.
+      // The browser editor uses the PDF.js ascent/descent metrics to create a
+      // box whose top/bottom match the original glyph box. Keep that box when
+      // exporting so the replacement lands on the same baseline.
       page.drawRectangle({ x, y, width, height, color: rgb(1, 1, 1), opacity: 1, borderWidth: 0 });
       const font = await getFont(annotation);
-      const fontSize = Math.max(6, (annotation.fontSize ?? 14) * sx);
-      const baseline = y + Math.max(1, height - font.heightAtSize(fontSize));
+      const requestedSize = Math.max(6, (annotation.fontSize ?? 14) * sx);
+      const naturalWidth = font.widthOfTextAtSize(annotation.text, requestedSize);
+      // If the replacement is longer than the original text box, reduce the
+      // font size just enough to avoid colliding with adjacent PDF content.
+      const fitRatio = naturalWidth > width && width > 0 ? width / naturalWidth : 1;
+      const fontSize = Math.max(6, requestedSize * fitRatio);
+      const fontHeight = font.heightAtSize(fontSize);
+      const baseline = y + Math.max(0, height - fontHeight);
       page.drawText(annotation.text, {
         x,
         y: baseline,
         size: fontSize,
         font,
         color: rgb(0.05, 0.05, 0.05),
+        maxWidth: Math.max(4, width),
       });
     }
 
