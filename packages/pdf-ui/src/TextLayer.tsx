@@ -1,9 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 
 type TextStyle = { fontFamily?: string; ascent?: number; descent?: number; vertical?: boolean };
 type TextItem = { str: string; transform: number[]; width: number; height?: number; fontName?: string; style?: TextStyle };
-export type TextSelection = { text: string; x: number; y: number; width: number; height: number; fontSize: number; fontName?: string; fontFamily?: string; fontWeight?: string; fontStyle?: string };
+type MeasuredItem = TextItem & { x: number; baseline: number; fontSize: number; top: number; bottom: number; family: string; fontWeight: string; fontStyle: string };
+type TextLine = { items: MeasuredItem[]; x: number; right: number; baseline: number; top: number; bottom: number; fontSize: number; family: string; fontWeight: string; fontStyle: string; bullet: boolean };
+export type TextSelection = { text: string; x: number; y: number; width: number; height: number; fontSize: number; fontName?: string; fontFamily?: string; fontWeight?: string; fontStyle?: string; lineHeight?: number };
+type TextBlock = { items: MeasuredItem[]; lines: TextLine[]; text: string; x: number; y: number; width: number; height: number; fontSize: number; fontName?: string; fontFamily: string; fontWeight: string; fontStyle: string; lineHeight: number };
 
 const toolbarButton: React.CSSProperties = { border: '1px solid #d0d5dd', background: '#fff', color: '#101828', borderRadius: 4, minWidth: 26, height: 26, padding: '0 6px', cursor: 'pointer', fontSize: 12 };
 const toolbarInput: React.CSSProperties = { border: '1px solid #d0d5dd', borderRadius: 4, height: 26, padding: '0 5px', fontSize: 12, background: '#fff', color: '#101828' };
@@ -11,11 +14,7 @@ const toolbarInput: React.CSSProperties = { border: '1px solid #d0d5dd', borderR
 function typography(fontName = '', pdfFamily = '') {
   const name = fontName.toLowerCase();
   const family = pdfFamily || (/times|serif/.test(name) ? 'Times New Roman, serif' : /courier|mono/.test(name) ? 'Courier New, monospace' : 'Arial, Helvetica, sans-serif');
-  return {
-    family,
-    fontWeight: /bold|black|heavy/.test(name) ? '700' : '400',
-    fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal',
-  };
+  return { family, fontWeight: /bold|black|heavy/.test(name) ? '700' : '400', fontStyle: /italic|oblique/.test(name) ? 'italic' : 'normal' };
 }
 
 function supportedFamily(family: string) {
@@ -24,21 +23,94 @@ function supportedFamily(family: string) {
   return 'Arial, Helvetica, sans-serif';
 }
 
+function sameTypography(a: MeasuredItem, b: MeasuredItem) {
+  return a.family === b.family && a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && Math.abs(a.fontSize - b.fontSize) <= Math.max(1, a.fontSize * 0.08);
+}
+
+function isBullet(text: string) {
+  return /^[\s]*(?:[•●▪◦‣⁃]|[-*]|\d+[.)])(?:\s|$)/.test(text);
+}
+
+/** Reconstruct PDF.js word/fragment items into Acrobat-like logical text blocks. */
+export function groupTextItems(items: TextItem[], viewport: pdfjsLib.PageViewport): TextBlock[] {
+  const measured: MeasuredItem[] = items.map((item) => {
+    const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
+    const fontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
+    const type = typography(item.fontName, item.style?.fontFamily);
+    const ascent = Math.max(0.55, item.style?.ascent ?? 0.9);
+    const descent = Math.min(-0.05, item.style?.descent ?? -0.2);
+    const lineHeight = Math.max(fontSize * 1.05, fontSize * (ascent - descent));
+    const baseline = transform[5];
+    return { ...item, x: transform[4], baseline, fontSize, top: baseline - fontSize * ascent, bottom: baseline + Math.abs(fontSize * descent), family: type.family, fontWeight: type.fontWeight, fontStyle: type.fontStyle, height: lineHeight };
+  }).sort((a, b) => a.baseline - b.baseline || a.x - b.x);
+
+  const lines: TextLine[] = [];
+  for (const item of measured) {
+    const tolerance = Math.max(2.5, item.fontSize * 0.35);
+    let line = lines.find((candidate) => Math.abs(candidate.baseline - item.baseline) <= tolerance && sameTypography(candidate.items[0], item));
+    if (!line) {
+      lines.push({ items: [item], x: item.x, right: item.x + item.width, baseline: item.baseline, top: item.top, bottom: item.bottom, fontSize: item.fontSize, family: item.family, fontWeight: item.fontWeight, fontStyle: item.fontStyle, bullet: isBullet(item.str) });
+      continue;
+    }
+    const previous = line.items[line.items.length - 1];
+    const gap = item.x - (previous.x + previous.width);
+    // A large gap on the same baseline usually indicates a second column.
+    const maxWordGap = Math.max(10, item.fontSize * 1.55);
+    if (gap > maxWordGap) {
+      lines.push({ items: [item], x: item.x, right: item.x + item.width, baseline: item.baseline, top: item.top, bottom: item.bottom, fontSize: item.fontSize, family: item.family, fontWeight: item.fontWeight, fontStyle: item.fontStyle, bullet: isBullet(item.str) });
+      continue;
+    }
+    line.items.push(item);
+    line.x = Math.min(line.x, item.x);
+    line.right = Math.max(line.right, item.x + item.width);
+    line.top = Math.min(line.top, item.top);
+    line.bottom = Math.max(line.bottom, item.bottom);
+    line.bullet ||= isBullet(item.str);
+  }
+
+  lines.sort((a, b) => a.baseline - b.baseline || a.x - b.x);
+  const blocks: TextBlock[] = [];
+  for (const line of lines) {
+    const previous = blocks[blocks.length - 1];
+    const previousLine = previous?.lines[previous.lines.length - 1];
+    const verticalGap = previousLine ? line.top - previousLine.bottom : Number.POSITIVE_INFINITY;
+    const indentDelta = previousLine ? Math.abs(line.x - previousLine.x) : Number.POSITIVE_INFINITY;
+    const compatible = Boolean(previous && previous.fontFamily === line.family && previous.fontWeight === line.fontWeight && previous.fontStyle === line.fontStyle && Math.abs(previous.fontSize - line.fontSize) <= Math.max(1, line.fontSize * 0.08) && verticalGap <= Math.max(7, line.fontSize * 0.9) && indentDelta <= Math.max(18, line.fontSize * 1.8) && !line.bullet);
+    if (!compatible) {
+      blocks.push({ items: [...line.items], lines: [line], text: line.items.map((item) => item.str).join(''), x: line.x, y: line.top, width: line.right - line.x, height: line.bottom - line.top, fontSize: line.fontSize, fontName: line.items[0].fontName, fontFamily: line.family, fontWeight: line.fontWeight, fontStyle: line.fontStyle, lineHeight: Math.max(8, line.bottom - line.top) });
+      continue;
+    }
+    previous.lines.push(line);
+    previous.items.push(...line.items);
+    previous.text += `\n${line.items.map((item) => item.str).join('')}`;
+    previous.x = Math.min(previous.x, line.x);
+    previous.y = Math.min(previous.y, line.top);
+    previous.width = Math.max(previous.width, line.right - previous.x);
+    previous.height = line.bottom - previous.y;
+    previous.lineHeight = Math.max(previous.lineHeight, line.bottom - line.top);
+  }
+  return blocks;
+}
+
 export default function TextLayer({ page, viewport, enabled, onEdit }: { page: pdfjsLib.PDFPageProxy; viewport: pdfjsLib.PageViewport; enabled: boolean; onEdit: (selection: TextSelection, replacement: string) => void }) {
   const [items, setItems] = useState<TextItem[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [editFontSize, setEditFontSize] = useState(0);
   const [editFontFamily, setEditFontFamily] = useState('Arial, Helvetica, sans-serif');
   const [editFontWeight, setEditFontWeight] = useState('400');
   const [editFontStyle, setEditFontStyle] = useState('normal');
   const inputRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const committedEditRef = useRef(false);
+
+  const blocks = useMemo(() => groupTextItems(items, viewport), [items, viewport]);
 
   useEffect(() => {
     let cancelled = false;
     setEditingIndex(null);
+    setHoveredIndex(null);
     setItems([]);
-
     const loadText = async () => {
       for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
         try {
@@ -49,10 +121,7 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
             if (done) break;
             if (value?.items) streamed.push(...value.items);
           }
-          const textItems = streamed
-            .filter((item: any) => typeof item.str === 'string' && item.str.trim().length > 0)
-            .map((item: any) => ({ ...item })) as TextItem[];
-
+          const textItems = streamed.filter((item: any) => typeof item.str === 'string' && item.str.trim().length > 0).map((item: any) => ({ ...item })) as TextItem[];
           if (!cancelled && textItems.length > 0) {
             const content = await page.getTextContent({ includeMarkedContent: false });
             const styles = content.styles ?? {};
@@ -66,22 +135,18 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
       }
       if (!cancelled) setItems([]);
     };
-
     void loadText();
     return () => { cancelled = true; };
   }, [page, enabled]);
 
   useEffect(() => {
     if (editingIndex === null || !inputRef.current) return;
-    const item = items[editingIndex];
-    if (!item) return;
-    const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
-    const initialFontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
-    const type = typography(item.fontName, item.style?.fontFamily);
-    setEditFontSize(initialFontSize);
-    setEditFontFamily(supportedFamily(type.family));
-    setEditFontWeight(type.fontWeight);
-    setEditFontStyle(type.fontStyle);
+    const block = blocks[editingIndex];
+    if (!block) return;
+    setEditFontSize(block.fontSize);
+    setEditFontFamily(supportedFamily(block.fontFamily));
+    setEditFontWeight(block.fontWeight);
+    setEditFontStyle(block.fontStyle);
     committedEditRef.current = false;
     inputRef.current.focus();
     const range = document.createRange();
@@ -89,149 +154,51 @@ export default function TextLayer({ page, viewport, enabled, onEdit }: { page: p
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-  }, [editingIndex, items, viewport.scale, viewport.rotation]);
+  }, [editingIndex, blocks, viewport.scale, viewport.rotation]);
 
   if (!enabled) return <div aria-label="PDF text layer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />;
 
   return (
-    <div aria-label="PDF text layer" data-text-item-count={items.length} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'auto' }}>
-      {items.map((item, index) => {
-        const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
-        const fontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
-        const baseline = transform[5];
-        const type = typography(item.fontName, item.style?.fontFamily);
-        // PDF.js exposes ascent/descent for the actual PDF font. Using those metrics
-        // instead of baseline - fontSize removes the vertical drift visible with
-        // Arial/Helvetica substitutions and keeps the edit box on the original baseline.
-        const ascent = Math.max(0.55, item.style?.ascent ?? 0.9);
-        const descent = Math.min(-0.05, item.style?.descent ?? -0.2);
-        const lineHeight = Math.max(fontSize * 1.05, fontSize * (ascent - descent));
-        const left = transform[4];
-        const top = baseline - fontSize * ascent;
-        const width = Math.max(2, item.width * viewport.scale);
-        const height = lineHeight;
+    <div aria-label="PDF text layer" data-text-item-count={items.length} data-text-block-count={blocks.length} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'auto' }}>
+      {blocks.map((block, index) => {
         const editing = editingIndex === index;
-        const activeFontSize = editing && editFontSize > 0 ? editFontSize : fontSize;
-        const activeFamily = editing ? editFontFamily : type.family;
-        const activeWeight = editing ? editFontWeight : type.fontWeight;
-        const activeStyle = editing ? editFontStyle : type.fontStyle;
-        const activeHeight = Math.max(activeFontSize * 1.05, activeFontSize * (ascent - descent));
-        const activeTop = baseline - activeFontSize * ascent;
-        const selection: TextSelection = {
-          text: item.str,
-          x: left,
-          y: activeTop,
-          width,
-          height: activeHeight,
-          fontSize: activeFontSize,
-          fontName: item.fontName,
-          fontFamily: activeFamily,
-          fontWeight: activeWeight,
-          fontStyle: activeStyle,
+        const activeFontSize = editing && editFontSize > 0 ? editFontSize : block.fontSize;
+        const activeFamily = editing ? editFontFamily : supportedFamily(block.fontFamily);
+        const activeWeight = editing ? editFontWeight : block.fontWeight;
+        const activeStyle = editing ? editFontStyle : block.fontStyle;
+        const activeLineHeight = Math.max(8, block.lineHeight * (activeFontSize / Math.max(1, block.fontSize)));
+        const selection: TextSelection = { text: block.text, x: block.x, y: block.y, width: Math.max(8, block.width), height: Math.max(activeLineHeight, block.height * (activeFontSize / Math.max(1, block.fontSize))), fontSize: activeFontSize, fontName: block.fontName, fontFamily: activeFamily, fontWeight: activeWeight, fontStyle: activeStyle, lineHeight: activeLineHeight };
+        const commitEdit = (value: string) => {
+          if (committedEditRef.current) return;
+          const replacement = value.replace(/\u00a0/g, ' ').replace(/\r/g, '').trimEnd();
+          if (replacement !== block.text || activeFontSize !== block.fontSize || activeFamily !== supportedFamily(block.fontFamily) || activeWeight !== block.fontWeight || activeStyle !== block.fontStyle) {
+            committedEditRef.current = true;
+            onEdit(selection, replacement);
+          }
+          setEditingIndex(null);
         };
 
         if (editing) {
-          const commitEdit = (value: string) => {
-            if (committedEditRef.current) return;
-            const replacement = value.trim();
-            if (replacement && (replacement !== item.str || activeFontSize !== fontSize || activeFamily !== type.family || activeWeight !== type.fontWeight || activeStyle !== type.fontStyle)) {
-              committedEditRef.current = true;
-              onEdit(selection, replacement);
-            }
-            setEditingIndex(null);
-          };
           return (
-            <React.Fragment key={`${index}-${item.str}`}>
-              <div
-                role="toolbar"
-                aria-label="PDF text formatting"
-                onMouseDown={(event) => event.preventDefault()}
-                style={{ position: 'absolute', left, top: activeTop - 34, display: 'flex', alignItems: 'center', gap: 4, padding: 4, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 6, boxShadow: '0 6px 18px rgba(16,24,40,.16)', zIndex: 20, whiteSpace: 'nowrap' }}
-              >
+            <React.Fragment key={`block-${index}`}>
+              <div ref={toolbarRef} role="toolbar" aria-label="PDF text formatting" onMouseDown={(event) => event.preventDefault()} style={{ position: 'absolute', left: block.x, top: Math.max(2, block.y - 38), display: 'flex', alignItems: 'center', gap: 4, padding: 4, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 6, boxShadow: '0 6px 18px rgba(16,24,40,.16)', zIndex: 20, whiteSpace: 'nowrap' }}>
                 <select aria-label="Font" value={activeFamily} onChange={(event) => setEditFontFamily(event.target.value)} style={{ ...toolbarInput, width: 130 }}>
                   <option value="Arial, Helvetica, sans-serif">Arial / Helvetica</option>
                   <option value="Times New Roman, serif">Times New Roman</option>
                   <option value="Courier New, monospace">Courier New</option>
                 </select>
-                <input aria-label="Font size" type="number" min={4} max={96} step={1} value={Math.round(activeFontSize)} onChange={(event) => setEditFontSize(Math.max(4, Math.min(96, Number(event.target.value) || fontSize)))} style={{ ...toolbarInput, width: 48 }} />
+                <input aria-label="Font size" type="number" min={4} max={96} step={1} value={Math.round(activeFontSize)} onChange={(event) => setEditFontSize(Math.max(4, Math.min(96, Number(event.target.value) || block.fontSize)))} style={{ ...toolbarInput, width: 48 }} />
                 <button type="button" aria-label="Bold" aria-pressed={activeWeight === '700'} onClick={() => setEditFontWeight((value) => value === '700' ? '400' : '700')} style={{ ...toolbarButton, fontWeight: 700, background: activeWeight === '700' ? '#e8f0ff' : '#fff' }}>B</button>
                 <button type="button" aria-label="Italic" aria-pressed={activeStyle === 'italic'} onClick={() => setEditFontStyle((value) => value === 'italic' ? 'normal' : 'italic')} style={{ ...toolbarButton, fontStyle: 'italic', background: activeStyle === 'italic' ? '#e8f0ff' : '#fff' }}>I</button>
                 <span style={{ fontSize: 10, color: '#667085', padding: '0 3px' }}>Enter = apply</span>
               </div>
-              <div
-                ref={inputRef}
-                contentEditable
-                suppressContentEditableWarning
-                role="textbox"
-                aria-label={`Edit PDF text: ${item.str}`}
-                onBlur={(event) => commitEdit(event.currentTarget.textContent ?? '')}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    commitEdit(event.currentTarget.textContent ?? '');
-                  } else if (event.key === 'Escape') {
-                    event.preventDefault();
-                    committedEditRef.current = true;
-                    setEditingIndex(null);
-                  }
-                }}
-                style={{
-                  position: 'absolute',
-                  left,
-                  top: activeTop,
-                  width: Math.max(width, 40),
-                  minHeight: activeHeight,
-                  height: activeHeight,
-                  padding: 0,
-                  margin: 0,
-                  border: '1px solid #2563eb',
-                  borderRadius: 2,
-                  outline: 'none',
-                  background: 'rgba(255,255,255,.96)',
-                  color: '#111827',
-                  fontFamily: activeFamily,
-                  fontSize: activeFontSize,
-                  fontWeight: activeWeight,
-                  fontStyle: activeStyle,
-                  lineHeight: `${activeHeight}px`,
-                  whiteSpace: 'pre',
-                  overflow: 'visible',
-                  boxSizing: 'border-box',
-                  cursor: 'text',
-                  zIndex: 5,
-                }}
-              >{item.str}</div>
+              <div ref={inputRef} contentEditable suppressContentEditableWarning role="textbox" aria-label={`Edit PDF text block: ${block.text.split('\n')[0]}`} onBlur={(event) => { if (event.relatedTarget instanceof Node && toolbarRef.current?.contains(event.relatedTarget)) return; commitEdit(event.currentTarget.innerText); }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); commitEdit(event.currentTarget.innerText); } else if (event.key === 'Escape') { event.preventDefault(); committedEditRef.current = true; setEditingIndex(null); } }} style={{ position: 'absolute', left: block.x, top: block.y, width: Math.max(block.width, 60), minHeight: selection.height, padding: 0, margin: 0, border: '2px solid #2563eb', borderRadius: 2, outline: 'none', background: 'rgba(255,255,255,.98)', color: '#111827', fontFamily: activeFamily, fontSize: activeFontSize, fontWeight: activeWeight, fontStyle: activeStyle, lineHeight: `${activeLineHeight}px`, whiteSpace: 'pre-wrap', overflow: 'hidden', boxSizing: 'border-box', cursor: 'text', zIndex: 10 }}>{block.text}</div>
             </React.Fragment>
           );
         }
 
-        return (
-          <span
-            key={`${index}-${item.str}`}
-            data-pdf-text-item="true"
-            title="Click to edit this PDF text"
-            onClick={(event) => {
-              event.stopPropagation();
-              committedEditRef.current = false;
-              setEditingIndex(index);
-            }}
-            style={{
-              position: 'absolute',
-              left,
-              top,
-              width,
-              height,
-              color: 'transparent',
-              background: 'rgba(37,99,235,.035)',
-              border: '1px solid rgba(37,99,235,.10)',
-              cursor: 'text',
-              userSelect: 'none',
-              whiteSpace: 'pre',
-              overflow: 'hidden',
-              boxSizing: 'border-box',
-            }}
-          >{item.str}</span>
-        );
+        const visibleOutline = hoveredIndex === index;
+        return <span key={`block-${index}`} data-pdf-text-item="true" data-pdf-text-block="true" title="Click to edit this text block" onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} onClick={(event) => { event.stopPropagation(); committedEditRef.current = false; setEditingIndex(index); }} style={{ position: 'absolute', left: block.x, top: block.y, width: Math.max(2, block.width), height: Math.max(2, block.height), color: 'transparent', background: visibleOutline ? 'rgba(37,99,235,.045)' : 'transparent', border: visibleOutline ? '1px solid rgba(37,99,235,.55)' : '1px solid transparent', borderRadius: 2, cursor: 'text', userSelect: 'none', whiteSpace: 'pre', overflow: 'hidden', boxSizing: 'border-box', transition: 'background .08s ease,border-color .08s ease' }}>{block.text}</span>;
       })}
     </div>
   );
