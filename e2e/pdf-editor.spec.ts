@@ -17,11 +17,7 @@ test('opens a PDF, edits text inline, and downloads a valid PDF', async ({ page 
   const chooserPromise = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Open' }).click();
   const chooser = await chooserPromise;
-  await chooser.setFiles({
-    name: 'e2e-text.pdf',
-    mimeType: 'application/pdf',
-    buffer: fixturePdfBuffer(),
-  });
+  await chooser.setFiles({ name: 'e2e-text.pdf', mimeType: 'application/pdf', buffer: fixturePdfBuffer() });
 
   const editButton = page.getByRole('button', { name: 'Edit Text' });
   await expect(editButton).toBeEnabled({ timeout: 20000 });
@@ -39,7 +35,8 @@ test('opens a PDF, edits text inline, and downloads a valid PDF', async ({ page 
   await expect(editor).toBeVisible();
   await editor.fill('PDF Editor Verified');
   await editor.press('Enter');
-  await expect(page.getByText(/Edited .*PDF Editor Verified.*Click Save PDF/)).toBeVisible();
+  await expect(editor).toBeHidden();
+  await expect(page.getByText('● Unsaved changes')).toBeVisible();
 
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download' }).click();
